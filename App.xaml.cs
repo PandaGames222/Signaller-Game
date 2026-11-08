@@ -31,7 +31,7 @@ public partial class App : Application
         GameEngine engine;
         try
         {
-            engine = new GameEngine(GameSaveStore.Load());
+            engine = new GameEngine(GameSaveStore.Load(GameStyle.Original), GameStyle.Original);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or JsonException or InvalidDataException)

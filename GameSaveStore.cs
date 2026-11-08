@@ -12,27 +12,40 @@ internal static class GameSaveStore
         PropertyNameCaseInsensitive = true
     };
 
-    private static readonly string SavePath = Path.Combine(
+    private static readonly string SaveDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Signaller",
-        "game-state.json");
+        "Signaller");
+    private static readonly string LegacySavePath = Path.Combine(SaveDirectory, "game-state.json");
 
-    public static GameSaveData? Load()
+    public static GameSaveData? Load(GameStyle style)
     {
-        if (!File.Exists(SavePath)) return null;
+        var path = SavePathFor(style);
+        if (!File.Exists(path))
+        {
+            if (style != GameStyle.Original || !File.Exists(LegacySavePath)) return null;
+            path = LegacySavePath;
+        }
 
-        var data = JsonSerializer.Deserialize<GameSaveData>(File.ReadAllText(SavePath), JsonOptions);
-        return data ?? throw new InvalidDataException("The saved game file is empty.");
+        var data = JsonSerializer.Deserialize<GameSaveData>(File.ReadAllText(path), JsonOptions)
+            ?? throw new InvalidDataException("The saved game file is empty.");
+        if ((data.Version >= GameEngine.SaveVersion && data.Style != style)
+            || (data.Version < GameEngine.SaveVersion && style != GameStyle.Original))
+            throw new InvalidDataException($"The saved game does not belong to {style} mode.");
+        return data;
     }
 
-    public static void Save(GameSaveData data)
+    public static void Save(GameSaveData data, GameStyle style)
     {
-        var directory = Path.GetDirectoryName(SavePath)
-            ?? throw new InvalidOperationException("The save directory could not be determined.");
-        Directory.CreateDirectory(directory);
+        if (data.Style != style)
+            throw new InvalidDataException("The saved game style does not match its save slot.");
+        Directory.CreateDirectory(SaveDirectory);
 
-        var temporaryPath = $"{SavePath}.{Guid.NewGuid():N}.tmp";
+        var path = SavePathFor(style);
+        var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(data, JsonOptions));
-        File.Move(temporaryPath, SavePath, overwrite: true);
+        File.Move(temporaryPath, path, overwrite: true);
     }
+
+    private static string SavePathFor(GameStyle style) =>
+        Path.Combine(SaveDirectory, $"game-state-{style.ToString().ToLowerInvariant()}.json");
 }

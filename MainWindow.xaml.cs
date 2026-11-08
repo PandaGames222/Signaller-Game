@@ -16,7 +16,7 @@ namespace Signaller;
 
 public partial class MainWindow : Window
 {
-    private readonly GameEngine _engine;
+    private GameEngine _engine;
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _updateCheckTimer;
     private readonly DispatcherTimer _updaterCleanupTimer;
@@ -27,9 +27,13 @@ public partial class MainWindow : Window
     private double _lastSaveSeconds;
     private bool _saveFailed;
     private bool _updateRequestInProgress;
+    private bool _inGame;
+    private bool _loadingSettings;
+    private bool _soundEnabled = true;
     private AppRelease? _availableUpdate;
     private TrainService? _selectedTrain;
     private Signal? _selectedSignal;
+    private double _lastDeskRefreshSeconds;
 
     public MainWindow(GameEngine engine)
     {
@@ -37,9 +41,25 @@ public partial class MainWindow : Window
         _engine = engine;
         Railway.Engine = _engine;
         _engine.TrainEnteredZone += Engine_TrainEnteredZone;
+        try
+        {
+            _soundEnabled = AppSettingsStore.Load().TrainEntrySoundEnabled;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or JsonException or InvalidDataException)
+        {
+            MessageBox.Show(
+                $"The saved preferences could not be loaded:\n{exception.Message}",
+                "Signaller — Settings warning",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.3.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.4.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
+        _loadingSettings = true;
+        EntrySoundCheckBox.IsChecked = _soundEnabled;
+        _loadingSettings = false;
 
         _timer = new DispatcherTimer(DispatcherPriority.Render)
         {
@@ -63,6 +83,7 @@ public partial class MainWindow : Window
         RefreshBuildList();
         RefreshHud();
         ApplyMode();
+        ShowMenuPanel(HomePanel);
         Closing += MainWindow_Closing;
         Loaded += async (_, _) => await CheckForUpdatesAsync(_windowLifetime.Token);
         Loaded += (_, _) => _updaterCleanupTimer.Start();
@@ -75,19 +96,26 @@ public partial class MainWindow : Window
         _lastTickSeconds = now;
         if (delta <= 0) return;
 
-        _engine.Advance(delta);
-        if (!_engine.IsPaused && _engine.Mode == GameMode.Signaller)
+        if (_inGame) _engine.Advance(delta);
+        if (_inGame && !_engine.IsPaused && _engine.Mode == GameMode.Signaller
+            && _engine.Style == GameStyle.Original)
             Railway.InvalidateVisual();
         RefreshHud();
         RefreshTrainDetails();
         RefreshSignalDetails();
 
-        if (now - _lastSaveSeconds >= 30)
+        if (_inGame && now - _lastSaveSeconds >= 30)
         {
             SaveGame();
             _lastSaveSeconds = now;
         }
         DisplayLatestNotification();
+        if (_inGame && _engine.Style == GameStyle.Regular
+            && now - _lastDeskRefreshSeconds >= 1)
+        {
+            RefreshRegularDesk();
+            _lastDeskRefreshSeconds = now;
+        }
     }
 
     private void RefreshHud()
@@ -112,8 +140,10 @@ public partial class MainWindow : Window
         EditorPanel.Visibility = editor ? Visibility.Visible : Visibility.Collapsed;
         EditorColumn.Width = editor ? new GridLength(252) : new GridLength(0);
         ModeEyebrow.Text = editor ? "NETWORK EXPANSION" : "NETWORK OPERATIONS";
-        ModeTitle.Text = editor ? "Network editor" : "Signaller desk";
-        MapSubtitle.Text = editor ? "GRID BUILD MODE" : "SIGNALLING DIAGRAM";
+        ModeTitle.Text = editor ? "Network editor"
+            : _engine.Style == GameStyle.Regular ? "Control desk" : "Signaller desk";
+        MapSubtitle.Text = editor ? "GRID BUILD MODE"
+            : _engine.Style == GameStyle.Regular ? "LIVE OPERATIONS BOARD" : "SIGNALLING DIAGRAM";
         CanvasHint.Text = editor
             ? "CONNECT TRACK FROM DEPOT TO STATION  ·  R TO ROTATE  ·  DEMOLISH FOR A 50% REFUND"
             : "CLICK A TRAIN FOR SERVICE DETAILS  ·  SELECT A SIGNAL TO SET ITS ASPECT";
@@ -121,6 +151,7 @@ public partial class MainWindow : Window
             ? new SolidColorBrush(Color.FromRgb(54, 35, 38))
             : new SolidColorBrush(Color.FromRgb(25, 35, 45));
         RefreshBuildListSelection();
+        UpdateStyleInterface();
         Railway.InvalidateVisual();
     }
 
@@ -201,6 +232,260 @@ public partial class MainWindow : Window
             button.Background = new SolidColorBrush(
                 isSelected ? Color.FromRgb(32, 54, 47) : Color.FromRgb(25, 35, 45));
         }
+    }
+
+    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMenuPanel(ModeSelectionPanel);
+    }
+
+    private void SettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMenuPanel(SettingsPanel);
+    }
+
+    private void BackToHomeButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowMenuPanel(HomePanel);
+    }
+
+    private void ShowMenuPanel(Grid panel)
+    {
+        HomePanel.Visibility = Visibility.Collapsed;
+        ModeSelectionPanel.Visibility = Visibility.Collapsed;
+        SettingsPanel.Visibility = Visibility.Collapsed;
+        panel.Visibility = Visibility.Visible;
+        MenuOverlay.Visibility = Visibility.Visible;
+        ModeNavigation.Visibility = Visibility.Collapsed;
+    }
+
+    private void GameStyleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: GameStyle style }) return;
+
+        try
+        {
+            if (_engine.Style != style)
+            {
+                var savedGame = GameSaveStore.Load(style);
+                var nextEngine = new GameEngine(savedGame, style);
+                if (_inGame) SaveGame();
+                _engine.TrainEnteredZone -= Engine_TrainEnteredZone;
+                _engine = nextEngine;
+                _engine.TrainEnteredZone += Engine_TrainEnteredZone;
+                Railway.Engine = _engine;
+            }
+
+            if (style == GameStyle.Regular && _engine.Mode != GameMode.Signaller)
+                _engine.SetMode(GameMode.Signaller);
+
+            _inGame = true;
+            _lastTickSeconds = _stopwatch.Elapsed.TotalSeconds;
+            _lastSaveSeconds = _lastTickSeconds;
+            MenuOverlay.Visibility = Visibility.Collapsed;
+            ModeNavigation.Visibility = Visibility.Visible;
+            CloseDetails();
+            ApplyMode();
+            RefreshHud();
+            RefreshRegularDesk();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or JsonException or InvalidDataException or ArgumentException)
+        {
+            MessageBox.Show(
+                $"Could not load {style} mode:\n{exception.Message}",
+                "Signaller — Game mode error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private void MenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_inGame) SaveGame();
+        _inGame = false;
+        CloseDetails();
+        ShowMenuPanel(HomePanel);
+    }
+
+    private void EntrySoundCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings) return;
+        var previousValue = _soundEnabled;
+        _soundEnabled = EntrySoundCheckBox.IsChecked == true;
+        try
+        {
+            AppSettingsStore.Save(new(_soundEnabled));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _soundEnabled = previousValue;
+            _loadingSettings = true;
+            EntrySoundCheckBox.IsChecked = previousValue;
+            _loadingSettings = false;
+            MessageBox.Show(
+                $"Your sound preference could not be saved:\n{exception.Message}",
+                "Signaller — Settings error",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private void UpdateStyleInterface()
+    {
+        var regular = _engine.Style == GameStyle.Regular;
+        OriginalModeNavigation.Visibility = regular ? Visibility.Collapsed : Visibility.Visible;
+        RegularModeNavigation.Visibility = regular ? Visibility.Visible : Visibility.Collapsed;
+        RegularDeskPanel.Visibility = _inGame && regular
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        Railway.Visibility = regular ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RefreshRegularDesk()
+    {
+        if (_engine.Style != GameStyle.Regular) return;
+
+        RegularRoutesPanel.Children.Clear();
+        foreach (var route in _engine.Routes)
+        {
+            var routeSignals = _engine.Signals
+                .Where(signal => signal.RouteId == route.Id
+                    || signal.RouteId == "common")
+                .ToArray();
+            var affected = routeSignals.Any(signal => signal.Aspect == SignalAspect.Red);
+            var trains = _engine.Trains.Where(train => train.RouteId == route.Id).ToArray();
+            var card = new Border
+            {
+                Margin = new Thickness(4),
+                Padding = new Thickness(12),
+                CornerRadius = new CornerRadius(7),
+                Background = new SolidColorBrush(Color.FromRgb(20, 30, 37)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(45, 59, 68)),
+                BorderThickness = new Thickness(1)
+            };
+            var content = new StackPanel();
+            content.Children.Add(new TextBlock
+            {
+                Text = route.Name,
+                Foreground = new SolidColorBrush(Color.FromRgb(220, 230, 233)),
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = $"{route.EntranceName}  →  {route.ExitName}",
+                Margin = new Thickness(0, 5, 0, 0),
+                Foreground = new SolidColorBrush(Color.FromRgb(130, 144, 157)),
+                FontSize = 8
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = affected ? "RESTRICTED · CHECK SIGNALS" : "ROUTE CLEAR",
+                Margin = new Thickness(0, 9, 0, 0),
+                Foreground = new SolidColorBrush(affected
+                    ? Color.FromRgb(245, 187, 97)
+                    : Color.FromRgb(115, 224, 176)),
+                FontSize = 8,
+                FontWeight = FontWeights.SemiBold
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = $"{trains.Length} active service(s)  ·  {routeSignals.Length} signals",
+                Margin = new Thickness(0, 5, 0, 0),
+                Foreground = new SolidColorBrush(Color.FromRgb(160, 174, 181)),
+                FontSize = 8
+            });
+            card.Child = content;
+            RegularRoutesPanel.Children.Add(card);
+        }
+
+        RegularTrainList.Children.Clear();
+        foreach (var train in _engine.Trains.OrderBy(train => train.Headcode, StringComparer.Ordinal))
+        {
+            var button = new Button
+            {
+                Tag = train.Id,
+                Margin = new Thickness(0, 0, 0, 5),
+                Padding = new Thickness(9, 7, 9, 7),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Background = new SolidColorBrush(Color.FromRgb(20, 30, 37)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(45, 59, 68))
+            };
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(new TextBlock
+            {
+                Text = train.Headcode,
+                Foreground = new SolidColorBrush(Color.FromRgb(115, 224, 176)),
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            var service = new TextBlock
+            {
+                Text = $"{train.ServiceName}\n{train.Status}",
+                Foreground = new SolidColorBrush(Color.FromRgb(190, 202, 207)),
+                FontSize = 8,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(service, 1);
+            row.Children.Add(service);
+            var nextStation = _engine.NextStation(train);
+            var destination = new TextBlock
+            {
+                Text = nextStation?.Platform ?? "EXIT",
+                Foreground = new SolidColorBrush(Color.FromRgb(130, 144, 157)),
+                FontSize = 8,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(destination, 2);
+            row.Children.Add(destination);
+            button.Content = row;
+            button.Click += RegularTrainButton_Click;
+            RegularTrainList.Children.Add(button);
+        }
+
+        RegularSignalsPanel.Children.Clear();
+        foreach (var signal in _engine.Signals)
+        {
+            var aspectColor = signal.Aspect switch
+            {
+                SignalAspect.Green => Color.FromRgb(115, 224, 176),
+                SignalAspect.Yellow => Color.FromRgb(245, 187, 97),
+                _ => Color.FromRgb(242, 107, 114)
+            };
+            var button = new Button
+            {
+                Tag = signal.Id,
+                Content = $"{signal.Id}     {signal.Aspect.ToString().ToUpperInvariant()}",
+                Margin = new Thickness(0, 0, 0, 5),
+                Padding = new Thickness(9, 7, 9, 7),
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Foreground = new SolidColorBrush(aspectColor),
+                Background = new SolidColorBrush(Color.FromRgb(20, 30, 37)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(45, 59, 68)),
+                ToolTip = "Open signal controls"
+            };
+            button.Click += RegularSignalButton_Click;
+            RegularSignalsPanel.Children.Add(button);
+        }
+    }
+
+    private void RegularTrainButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string trainId }) return;
+        var train = _engine.Trains.FirstOrDefault(candidate => candidate.Id == trainId);
+        if (train is not null) OpenTrainDetails(train);
+    }
+
+    private void RegularSignalButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string signalId }) return;
+        var signal = _engine.Signals.FirstOrDefault(candidate => candidate.Id == signalId);
+        if (signal is not null) OpenSignalDetails(signal);
     }
 
     private void BuildItemButton_Click(object sender, RoutedEventArgs e)
@@ -422,7 +707,7 @@ public partial class MainWindow : Window
 
     private void Engine_TrainEnteredZone(TrainService train)
     {
-        SystemSounds.Asterisk.Play();
+        if (_soundEnabled) SystemSounds.Asterisk.Play();
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
@@ -480,8 +765,9 @@ public partial class MainWindow : Window
     {
         if (_updateRequestInProgress) return;
         _updateRequestInProgress = true;
-        UpdateButton.Content = "SEARCHING…";
-        UpdateButton.ToolTip = "Checking GitHub for the latest Signaller release";
+        UpdateButton.Content = "UPDATE";
+        UpdateButton.IsEnabled = false;
+        UpdateButton.ToolTip = "Checking for the latest Signaller release";
 
         try
         {
@@ -490,8 +776,8 @@ public partial class MainWindow : Window
             _availableUpdate = release;
             if (release is null)
             {
-                UpdateButton.Content = "UP TO DATE";
-                UpdateButton.ToolTip = "Click to check for updates now";
+                UpdateButton.Content = "UPDATE";
+                UpdateButton.ToolTip = "You have the latest version. Click to check again.";
                 DisplayLatestNotification("You have the latest version of Signaller.");
             }
             else
@@ -509,8 +795,8 @@ public partial class MainWindow : Window
         {
             if (cancellationToken.IsCancellationRequested) return;
             _availableUpdate = null;
-            UpdateButton.Content = "CHECK FAILED";
-            UpdateButton.ToolTip = "Could not check for updates. Click to try again.";
+            UpdateButton.Content = "UPDATE";
+            UpdateButton.ToolTip = "Could not check for updates. Click to retry.";
             DisplayLatestNotification($"Could not check for updates: {exception.Message}");
         }
         finally
@@ -525,7 +811,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            GameSaveStore.Save(_engine.Save());
+            GameSaveStore.Save(_engine.Save(), _engine.Style);
             _lastSaveSeconds = _stopwatch.Elapsed.TotalSeconds;
             _saveFailed = false;
         }
@@ -540,7 +826,7 @@ public partial class MainWindow : Window
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         _windowLifetime.Cancel();
-        SaveGame();
+        if (_inGame) SaveGame();
         _timer.Stop();
         _updateCheckTimer.Stop();
         _updaterCleanupTimer.Stop();

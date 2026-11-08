@@ -6,6 +6,12 @@ public enum GameMode
     Editor
 }
 
+public enum GameStyle
+{
+    Original,
+    Regular
+}
+
 public enum SignalAspect
 {
     Red,
@@ -100,7 +106,8 @@ public sealed record GameSaveData(
     IReadOnlyList<SignalSaveData> Signals,
     IReadOnlyList<PointsSaveData> Points,
     TrainSaveData Train,
-    IReadOnlyList<TrainSaveData>? Trains = null);
+    IReadOnlyList<TrainSaveData>? Trains = null,
+    GameStyle Style = GameStyle.Original);
 
 public sealed record SignalSaveData(string Id, SignalAspect Aspect);
 public sealed record PointsSaveData(string Id, PointDirection Direction);
@@ -110,7 +117,7 @@ public sealed class GameEngine
     public const double WorldWidth = 1800;
     public const double WorldHeight = 1100;
     public const double GridSize = 40;
-    public const int SaveVersion = 2;
+    public const int SaveVersion = 3;
     public const int StartingBalance = 5000;
     public const double SafetyDistance = 36;
     public const double SimulationClockRate = 3;
@@ -194,8 +201,9 @@ public sealed class GameEngine
     private double _spawnCountdown = 10;
     private int _nextTrainNumber = 6;
 
-    public GameEngine(GameSaveData? save = null)
+    public GameEngine(GameSaveData? save = null, GameStyle style = GameStyle.Original)
     {
+        Style = save is not null && Enum.IsDefined(save.Style) ? save.Style : style;
         _routes.AddRange(
         [
             new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
@@ -244,6 +252,7 @@ public sealed class GameEngine
     }
 
     public double TrackLength { get; }
+    public GameStyle Style { get; }
     public double TrainDistance => Trains.FirstOrDefault()?.Distance ?? 0;
     public bool TrainStopped => Trains.FirstOrDefault()?.Stopped ?? false;
     public string TrainStatus => Trains.FirstOrDefault()?.Status ?? "Waiting at the entrance";
@@ -507,7 +516,8 @@ public sealed class GameEngine
             Signals.Select(signal => new SignalSaveData(signal.Id, signal.Aspect)).ToArray(),
             [],
             primaryTrain,
-            trains);
+            trains,
+            Style);
     }
 
     public IReadOnlyList<string> DrainNotifications()
@@ -950,6 +960,8 @@ public sealed class GameEngine
 
         if (!Enum.IsDefined(save.Mode))
             throw new InvalidDataException("The saved game contains an invalid game mode.");
+        if (save.Version >= 3 && !Enum.IsDefined(save.Style))
+            throw new InvalidDataException("The saved game contains an invalid game style.");
         Balance = save.Balance;
         Mode = save.Mode;
         GameSeconds = save.GameSeconds;

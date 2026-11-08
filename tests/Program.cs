@@ -13,6 +13,7 @@ var tests = new (string Name, Action Run)[]
     ("editor refuses occupied and track-overlapping placements", EditorRejectsOccupiedPlacements),
     ("connected depot-to-station track activates an operating route", EditorTracksBecomeOperational),
     ("game save restores operation and editor state", GameSaveRestoresState),
+    ("original and regular saves preserve their selected game style", GameStylesPersistIndependently),
     ("version one saves migrate without manual switch controls", LegacySavesMigrate),
     ("invalid and overlapping saved items are rejected", InvalidSavesAreRejected),
     ("large balances cannot overflow during train payments", LargeBalancesDoNotOverflow),
@@ -292,6 +293,19 @@ static void GameSaveRestoresState()
     Equal(40d, restored.PlacedItems[0].X);
     Equal(90, restored.PlacedItems[1].Rotation);
     Equal(GameMode.Editor, restored.Mode);
+}
+
+static void GameStylesPersistIndependently()
+{
+    var original = new GameEngine(style: GameStyle.Original);
+    var regular = new GameEngine(style: GameStyle.Regular);
+    var originalSave = original.Save();
+    var regularSave = regular.Save();
+
+    Equal(GameStyle.Original, originalSave.Style);
+    Equal(GameStyle.Regular, regularSave.Style);
+    Equal(GameStyle.Original, new GameEngine(originalSave).Style);
+    Equal(GameStyle.Regular, new GameEngine(regularSave, GameStyle.Regular).Style);
 }
 
 static void LegacySavesMigrate()
