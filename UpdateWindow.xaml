@@ -37,7 +37,7 @@
                     <TextBlock Text="GAME UPDATE" Margin="0,3,0,0"
                                Foreground="#91A39F" FontSize="9" />
                 </StackPanel>
-                <TextBlock x:Name="VersionBadge" Grid.Column="2" Text="VERSION 1.5.0"
+                <TextBlock x:Name="VersionBadge" Grid.Column="2" Text="VERSION 1.6.0"
                            Foreground="#82E2BA" FontSize="9" VerticalAlignment="Center" />
             </Grid>
             <Border Grid.Row="0" VerticalAlignment="Bottom" BorderBrush="#293841"

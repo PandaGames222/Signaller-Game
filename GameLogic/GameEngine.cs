@@ -19,6 +19,14 @@ public enum SignalAspect
     Green
 }
 
+public enum PlatformIndicator
+{
+    Clear,
+    DoorsOpen,
+    ReadyToDepart,
+    Delayed
+}
+
 public enum PointDirection
 {
     Straight,
@@ -51,7 +59,11 @@ public sealed record GameRoute(
     IReadOnlyList<TrackPoint> Points,
     string EntranceName = "WEST DEPOT");
 
-public sealed record StationInfo(string Name, string Platform, double Distance);
+public sealed record StationInfo(
+    string Name,
+    string Platform,
+    double Distance,
+    string GroupId = "");
 
 public sealed class Signal
 {
@@ -81,6 +93,8 @@ public sealed class TrainService
     public double LatencySeconds { get; set; }
     public bool Stopped { get; set; }
     public string Status { get; set; } = "In service";
+    public double StationDwellSeconds { get; set; }
+    public double? StoppedAtStationDistance { get; set; }
 }
 
 public sealed record TrainSaveData(
@@ -93,7 +107,9 @@ public sealed record TrainSaveData(
     string TrainType = "Class 170 Turbostar",
     string RouteId = "main",
     double Speed = 47,
-    double LatencySeconds = 0);
+    double LatencySeconds = 0,
+    double StationDwellSeconds = 0,
+    double? StoppedAtStationDistance = null);
 
 public sealed record GameSaveData(
     int Version,
@@ -117,13 +133,16 @@ public sealed class GameEngine
     public const double WorldWidth = 1800;
     public const double WorldHeight = 1100;
     public const double GridSize = 40;
-    public const int SaveVersion = 3;
+    public const int SaveVersion = 4;
     public const int StartingBalance = 5000;
     public const double SafetyDistance = 36;
     public const double SimulationClockRate = 3;
     public const double TrainSpeed = 47;
     public const double SectionPayment = 25;
     public const double DestinationPayment = 100;
+    public const double StationDoorOpenSeconds = 10;
+    public const double StationMinimumDwellSeconds = 15;
+    public const double StationDelayedSeconds = 30;
     public const int MaximumTrains = 5;
 
     public static readonly TrackPoint[] MainRoutePoints =
@@ -162,12 +181,27 @@ public sealed class GameEngine
         new(820, 1030)
     ];
 
+    private static readonly TrackPoint[] AirportRoutePoints =
+    [
+        .. MainRoutePoints.Take(7),
+        new(1410, 260),
+        new(1600, 180)
+    ];
+
+    private static readonly TrackPoint[] HarborRoutePoints =
+    [
+        .. MainRoutePoints.Take(7),
+        new(1400, 570),
+        new(1570, 730),
+        new(1650, 900)
+    ];
+
     private static readonly RouteMetrics MainMetrics = MeasureRoute(MainRoutePoints);
     private static readonly RouteMetrics NorthMetrics = MeasureRoute(NorthRoutePoints);
     private static readonly RouteMetrics SouthMetrics = MeasureRoute(SouthRoutePoints);
-    private static readonly double JunctionDistance = MainMetrics.Starts[4];
-    private static readonly double SharedTrackLength = MainMetrics.Starts[4] + SafetyDistance * 2;
-    private static readonly string[] RouteIds = ["main", "north", "south"];
+    private static readonly RouteMetrics AirportMetrics = MeasureRoute(AirportRoutePoints);
+    private static readonly RouteMetrics HarborMetrics = MeasureRoute(HarborRoutePoints);
+    private static readonly string[] RouteIds = ["main", "north", "south", "airport", "harbor"];
     private static readonly string[] ServiceNames =
     [
         "Greyfield Local",
@@ -204,12 +238,21 @@ public sealed class GameEngine
     public GameEngine(GameSaveData? save = null, GameStyle style = GameStyle.Original)
     {
         Style = save is not null && Enum.IsDefined(save.Style) ? save.Style : style;
-        _routes.AddRange(
-        [
-            new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
-            new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", NorthRoutePoints),
-            new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", SouthRoutePoints)
-        ]);
+        _routes.AddRange(Style == GameStyle.Regular
+            ?
+            [
+                new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
+                new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", NorthRoutePoints),
+                new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", SouthRoutePoints),
+                new("airport", "AIRPORT LINE", "Greyfield Airport", "AIRPORT EXIT", AirportRoutePoints),
+                new("harbor", "HARBOR LINE", "East Harbor", "HARBOR EXIT", HarborRoutePoints)
+            ]
+            :
+            [
+                new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
+                new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", NorthRoutePoints),
+                new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", SouthRoutePoints)
+            ]);
         _availableRoutes.AddRange(_routes);
         _metrics = new Dictionary<string, RouteMetrics>(StringComparer.Ordinal)
         {
@@ -217,18 +260,54 @@ public sealed class GameEngine
             ["north"] = NorthMetrics,
             ["south"] = SouthMetrics
         };
+        if (Style == GameStyle.Regular)
+        {
+            _metrics.Add("airport", AirportMetrics);
+            _metrics.Add("harbor", HarborMetrics);
+        }
         TrackLength = MainMetrics.Total;
-        var northQuayDistance = NorthMetrics.Starts[5] + 120;
-        var canalParkDistance = SouthMetrics.Starts[5] + 100;
-        _stations = new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
+        var centralDistance = MainMetrics.Starts[2] + 90;
+        _stations = Style == GameStyle.Regular
+            ? new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
+            {
+                ["main"] =
+                [
+                    new("Greyfield Central", "Platform 1", centralDistance, "central"),
+                    new("Riverside", "Platform 6", MainMetrics.Starts[6] + 70),
+                    new("East Market", "Platform 7", MainMetrics.Starts[7] + 105)
+                ],
+                ["north"] =
+                [
+                    new("Greyfield Central", "Platform 2", centralDistance, "central"),
+                    new("North Junction", "Platform 8", NorthMetrics.Starts[4] + 100),
+                    new("North Quay", "Platform 9", NorthMetrics.Starts[5] + 130)
+                ],
+                ["south"] =
+                [
+                    new("Greyfield Central", "Platform 3", centralDistance, "central"),
+                    new("Market Cross", "Platform 10", SouthMetrics.Starts[4] + 100),
+                    new("Canal Park", "Platform 11", SouthMetrics.Starts[5] + 100)
+                ],
+                ["airport"] =
+                [
+                    new("Greyfield Central", "Platform 4", centralDistance, "central"),
+                    new("Airport Parkway", "Platform 12", AirportMetrics.Starts[7] + 110)
+                ],
+                ["harbor"] =
+                [
+                    new("Greyfield Central", "Platform 5", centralDistance, "central"),
+                    new("Harbor Point", "Platform 13", HarborMetrics.Starts[7] + 105)
+                ]
+            }
+            : new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
         {
             ["main"] =
             [
                 new("Greyfield Central", "Platform 1", MainMetrics.Starts[2] + 90),
                 new("Riverside", "Platform 2", MainMetrics.Starts[6] + 80)
             ],
-            ["north"] = [new("North Quay", "Platform 3", northQuayDistance)],
-            ["south"] = [new("Canal Park", "Platform 4", canalParkDistance)]
+            ["north"] = [new("North Quay", "Platform 3", NorthMetrics.Starts[5] + 120)],
+            ["south"] = [new("Canal Park", "Platform 4", SouthMetrics.Starts[5] + 100)]
         };
 
         _signals.AddRange(
@@ -244,6 +323,7 @@ public sealed class GameEngine
             new() { Id = "S09", Distance = SouthMetrics.Starts[5] + 45, Aspect = SignalAspect.Green, Side = 1, RouteId = "south" },
             new() { Id = "S10", Distance = SouthMetrics.Starts[5] + 180, Aspect = SignalAspect.Green, Side = -1, RouteId = "south" }
         ]);
+        if (Style == GameStyle.Regular) AddStationSignals();
 
         if (save is null)
             CreateInitialFleet();
@@ -275,6 +355,7 @@ public sealed class GameEngine
     public int RouteCount => _availableRoutes.Count;
     public int SelectedRotation { get; private set; }
     public event Action<TrainService>? TrainEnteredZone;
+    public event Action<TrainService, StationInfo, bool>? TrainStationChanged;
 
     public string FormattedBalance => $"${Balance:N0}";
 
@@ -348,6 +429,27 @@ public sealed class GameEngine
     }
 
     public IReadOnlyList<StationInfo> StationsForRoute(string routeId) => _stations[routeId];
+    public IEnumerable<(string RouteId, StationInfo Station)> AllStations =>
+        _stations.SelectMany(route => route.Value.Select(station => (route.Key, station)));
+
+    public StationInfo? StoppedAtStation(TrainService train)
+    {
+        return train.StoppedAtStationDistance is { } distance
+            ? _stations[train.RouteId].FirstOrDefault(station => station.Distance == distance)
+            : null;
+    }
+
+    public PlatformIndicator PlatformIndicatorFor(string routeId, StationInfo station)
+    {
+        var train = _trains.FirstOrDefault(candidate =>
+            candidate.RouteId == routeId && candidate.StoppedAtStationDistance == station.Distance);
+        if (train is null) return PlatformIndicator.Clear;
+        if (train.StationDwellSeconds >= StationDelayedSeconds) return PlatformIndicator.Delayed;
+        return train.StationDwellSeconds < StationDoorOpenSeconds
+            ? PlatformIndicator.DoorsOpen
+            : PlatformIndicator.ReadyToDepart;
+    }
+
     public bool IsOperationalSignalItem(PlacedItem item) =>
         _operationalSignalLocations.Contains((item.X, item.Y));
 
@@ -527,6 +629,41 @@ public sealed class GameEngine
         return notifications;
     }
 
+    private void AddStationSignals()
+    {
+        var stationGroups = AllStations.GroupBy(item =>
+            string.IsNullOrWhiteSpace(item.Station.GroupId)
+                ? $"{item.RouteId}/{item.Station.Name}"
+                : item.Station.GroupId);
+        var signalNumber = 1;
+        foreach (var group in stationGroups)
+        {
+            var (routeId, station) = group.First();
+            var signalRouteId = group.Key == "central" ? "common" : routeId;
+            var beforeDistance = station.Distance - 55;
+            var afterDistance = station.Distance + 55;
+            if (beforeDistance <= 0 || afterDistance >= RouteMetricsFor(routeId).Total) continue;
+
+            _signals.Add(new Signal
+            {
+                Id = $"ST{signalNumber:D2}A",
+                RouteId = signalRouteId,
+                Distance = beforeDistance,
+                Side = signalNumber % 2 == 0 ? 1 : -1,
+                Aspect = SignalAspect.Green
+            });
+            _signals.Add(new Signal
+            {
+                Id = $"ST{signalNumber:D2}D",
+                RouteId = signalRouteId,
+                Distance = afterDistance,
+                Side = signalNumber % 2 == 0 ? -1 : 1,
+                Aspect = SignalAspect.Green
+            });
+            signalNumber++;
+        }
+    }
+
     private void CreateInitialFleet()
     {
         var trains = new List<TrainService>(MaximumTrains);
@@ -535,7 +672,7 @@ public sealed class GameEngine
             var profileIndex = index % ServiceNames.Length;
             trains.Add(CreateTrain(
                 profileIndex,
-                index * 155,
+                index * (Style == GameStyle.Regular ? 85 : 155),
                 $"TR{index + 1:D2}",
                 stopped: false,
                 "In service",
@@ -803,6 +940,48 @@ public sealed class GameEngine
         {
             var route = GetRoute(train.RouteId);
             var routeLength = RouteMetricsFor(train.RouteId).Total;
+            if (Style == GameStyle.Regular && train.StoppedAtStationDistance is not null)
+            {
+                var station = StoppedAtStation(train);
+                if (station is null)
+                {
+                    train.StoppedAtStationDistance = null;
+                    train.StationDwellSeconds = 0;
+                }
+                else
+                {
+                    train.StationDwellSeconds += deltaSeconds;
+                    train.Stopped = true;
+                    if (train.StationDwellSeconds < StationMinimumDwellSeconds)
+                    {
+                        train.Status = train.StationDwellSeconds < StationDoorOpenSeconds
+                            ? $"At {station.Name} · doors open"
+                            : $"Preparing to depart {station.Name}";
+                        continue;
+                    }
+
+                    var departureObstacle = FindNextObstacle(train);
+                    var departureGap = FindFollowingTrainGap(train);
+                    var signalHoldsPlatform = departureObstacle is { Distance: <= SafetyDistance + 55 };
+                    var trafficHoldsPlatform = departureGap is { } platformTrafficGap
+                        && platformTrafficGap <= SafetyDistance * 2;
+                    if (signalHoldsPlatform || trafficHoldsPlatform)
+                    {
+                        train.LatencySeconds += deltaSeconds;
+                        train.Status = signalHoldsPlatform
+                            ? $"Ready at {station.Name} · held at signal {departureObstacle!.Value.Id}"
+                            : $"Ready at {station.Name} · waiting for traffic";
+                        continue;
+                    }
+
+                    train.StoppedAtStationDistance = null;
+                    train.StationDwellSeconds = 0;
+                    train.Stopped = false;
+                    train.Status = $"Departing {station.Name}";
+                    TrainStationChanged?.Invoke(train, station, false);
+                }
+            }
+
             if (train.Distance >= routeLength)
             {
                 finishedTrains.Add(train);
@@ -818,6 +997,38 @@ public sealed class GameEngine
             var followingIsClosest = followingGap is { } gap && gap < obstacleDistance;
             if (followingIsClosest && followingGap is { } safeGap)
                 obstacleDistance = safeGap;
+
+            var nextStation = Style == GameStyle.Regular
+                ? _stations[train.RouteId].FirstOrDefault(station => station.Distance > train.Distance)
+                : null;
+            var distanceToStation = nextStation is null
+                ? double.PositiveInfinity
+                : nextStation.Distance - train.Distance;
+            var followingGapAllowsStation = followingGap is null
+                || followingGap.Value >= distanceToStation + SafetyDistance;
+            if (nextStation is not null && distanceToStation <= advance
+                && distanceToStation < obstacleDistance && followingGapAllowsStation)
+            {
+                var stationArrivalPreviousDistance = train.Distance;
+                train.Distance = nextStation.Distance;
+                train.Stopped = true;
+                train.StoppedAtStationDistance = nextStation.Distance;
+                train.StationDwellSeconds = 0;
+                train.Status = $"At {nextStation.Name} · doors open";
+                foreach (var signal in Signals.Where(signal => IsSignalOnTrainRoute(signal, train)))
+                {
+                    if (signal.Aspect != SignalAspect.Red
+                        && CrossedOpenMarker(stationArrivalPreviousDistance, signal.Distance, distanceToStation))
+                    {
+                        earnings += SectionPayment;
+                        _notifications.Add($"{train.Headcode} safely passed {signal.Id} — ${SectionPayment:N0}.");
+                    }
+                }
+                earnings += DestinationPayment;
+                _notifications.Add($"{train.Headcode} arrived at {nextStation.Name}, {nextStation.Platform}.");
+                TrainStationChanged?.Invoke(train, nextStation, true);
+                continue;
+            }
 
             train.Stopped = obstacleDistance <= SafetyDistance + advance;
             if (train.Stopped)
@@ -852,7 +1063,7 @@ public sealed class GameEngine
                 if (CrossedOpenMarker(previousDistance, station.Distance, advance))
                 {
                     earnings += DestinationPayment;
-                    _notifications.Add($"{train.Headcode} called at {station.Name}, {station.Platform}.");
+                    _notifications.Add($"{train.Headcode} passed {station.Name}, {station.Platform}.");
                 }
             }
 
@@ -908,16 +1119,33 @@ public sealed class GameEngine
 
     private bool IsOnSameTrackSection(TrainService first, TrainService second)
     {
-        return first.RouteId == second.RouteId
-            || first.RouteId is "main" or "north" or "south"
-            && second.RouteId is "main" or "north" or "south"
-            && first.Distance < SharedTrackLength && second.Distance < SharedTrackLength;
+        if (first.RouteId == second.RouteId) return true;
+        var sharedLength = SharedPrefixLength(first.RouteId, second.RouteId);
+        return sharedLength > 0
+            && first.Distance < sharedLength + SafetyDistance
+            && second.Distance < sharedLength + SafetyDistance;
     }
 
     private bool IsSignalOnTrainRoute(Signal signal, TrainService train)
     {
-        return signal.RouteId == train.RouteId
-            || (signal.RouteId == "common" && train.Distance < JunctionDistance);
+        if (signal.RouteId == train.RouteId) return true;
+        var signalRoute = signal.RouteId == "common" ? "main" : signal.RouteId;
+        var sharedLength = SharedPrefixLength(train.RouteId, signalRoute);
+        return sharedLength > 0
+            && signal.Distance < sharedLength
+            && train.Distance < sharedLength;
+    }
+
+    private double SharedPrefixLength(string firstRouteId, string secondRouteId)
+    {
+        var first = GetRoute(firstRouteId).Points;
+        var second = GetRoute(secondRouteId).Points;
+        var commonPointCount = 0;
+        while (commonPointCount < first.Count && commonPointCount < second.Count
+            && first[commonPointCount] == second[commonPointCount])
+            commonPointCount++;
+        if (commonPointCount < 2) return 0;
+        return MeasureRoute(first.Take(commonPointCount).ToArray()).Total;
     }
 
     private SignalAspect NextSignalAspect(TrainService train)
@@ -1043,7 +1271,13 @@ public sealed class GameEngine
                 || !_metrics.TryGetValue(trainState.RouteId, out var metrics)
                 || !double.IsFinite(distance) || distance < 0 || distance > metrics.Total
                 || !double.IsFinite(trainState.Speed) || trainState.Speed is < 10 or > 120
-                || !double.IsFinite(trainState.LatencySeconds))
+                || !double.IsFinite(trainState.LatencySeconds)
+                || !double.IsFinite(trainState.StationDwellSeconds) || trainState.StationDwellSeconds < 0
+                || (trainState.StoppedAtStationDistance is { } stationDistance
+                    && (!trainState.Stopped
+                        || !double.IsFinite(stationDistance)
+                        || Math.Abs(distance - stationDistance) > 0.01
+                        || !_stations[trainState.RouteId].Any(station => station.Distance == stationDistance))))
                 throw new InvalidDataException("The saved game contains an invalid train.");
             trains.Add(new TrainService
             {
@@ -1056,7 +1290,9 @@ public sealed class GameEngine
                 Distance = distance,
                 LatencySeconds = trainState.LatencySeconds,
                 Stopped = trainState.Stopped,
-                Status = trainState.Status
+                Status = trainState.Status,
+                StationDwellSeconds = trainState.StationDwellSeconds,
+                StoppedAtStationDistance = trainState.StoppedAtStationDistance
             });
         }
 
@@ -1084,7 +1320,7 @@ public sealed class GameEngine
             Headcode = Headcodes[profileIndex],
             ServiceName = ServiceNames[profileIndex],
             TrainType = TrainTypes[profileIndex],
-            RouteId = routeId ?? RouteIds[profileIndex % RouteIds.Length],
+            RouteId = routeId ?? RouteIds[profileIndex % (Style == GameStyle.Regular ? RouteIds.Length : 3)],
             Speed = ServiceSpeeds[profileIndex],
             Distance = distance,
             LatencySeconds = latencySeconds,
@@ -1105,7 +1341,9 @@ public sealed class GameEngine
             train.TrainType,
             train.RouteId,
             train.Speed,
-            train.LatencySeconds);
+            train.LatencySeconds,
+            train.StationDwellSeconds,
+            train.StoppedAtStationDistance);
     }
 
     private void RecalculateIncome()

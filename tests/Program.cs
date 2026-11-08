@@ -6,6 +6,8 @@ var tests = new (string Name, Action Run)[]
     ("train stops safely at a red signal and resumes on green", TrainStopsAtSignalAndResumes),
     ("train remains stopped at a red signal until it is cleared", RedSignalKeepsTrainStopped),
     ("automatic routing serves all three terminal branches", AutomaticRoutingServesThreeTerminals),
+    ("regular mode has junctions, central platforms, side stations, and station signals", RegularModeBuildsExpandedNetwork),
+    ("regular trains stop, open doors, wait safely, and resume at stations", RegularTrainsServeStations),
     ("trains enter the zone and trigger an arrival notification", TrainEntryIsReported),
     ("only safe signal and destination crossings pay", SafePassagesEarnMoney),
     ("loop distance and wrapped crossings are correct", TrackDistancesWrapCorrectly),
@@ -98,6 +100,8 @@ static void AutomaticRoutingServesThreeTerminals()
     Equal(GameEngine.MaximumTrains, engine.TrainCount);
     Check(!GameEngine.BuildItems.Any(item => item.Kind == BuildItemKind.Switch),
         "Manual switch controls must not be offered.");
+    Check(!engine.Trains.Any(train => train.StoppedAtStationDistance is not null),
+        "Original mode should retain its existing through-running station behavior.");
     Check(engine.Trains.Select(train => train.RouteId).Distinct().Count() > 1,
         "The opening timetable should use automatic routes.");
     Check(engine.Routes.All(route => route.Points.Count >= 3 && route.ExitName.Contains("EXIT")),
@@ -115,6 +119,80 @@ static void AutomaticRoutingServesThreeTerminals()
         Check(gap >= GameEngine.SafetyDistance - 0.1,
             "The automatic interlocking must preserve safe train separation.");
     }
+}
+
+static void RegularModeBuildsExpandedNetwork()
+{
+    var engine = new GameEngine(style: GameStyle.Regular);
+    Equal(5, engine.RouteCount);
+    Equal(3, new GameEngine(style: GameStyle.Original).RouteCount);
+    Equal(10, new GameEngine(style: GameStyle.Original).Signals.Count);
+    Check(engine.Trains.All(train =>
+            train.Distance < engine.StationsForRoute(train.RouteId).First(station => station.GroupId == "central").Distance),
+        "Every opening service should approach and call at Greyfield Central.");
+    Check(engine.Signals.Count >= 28, "Every regular-mode station should have approach and departure signals.");
+    Equal(5, engine.AllStations.Count(item => item.Station.GroupId == "central"));
+    Check(engine.AllStations.Select(item => item.Station.Name).Distinct().Count() >= 9,
+        "The regular timetable should serve the central station and multiple side stations.");
+    foreach (var (routeId, station) in engine.AllStations)
+    {
+        var stationSignals = engine.Signals
+            .Where(signal => signal.RouteId == routeId || (station.GroupId == "central" && signal.RouteId == "common"))
+            .ToArray();
+        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance + 55) < 0.001),
+            $"{station.Name} should have an approach signal.");
+        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance - 55) < 0.001),
+            $"{station.Name} should have a departure signal.");
+    }
+}
+
+static void RegularTrainsServeStations()
+{
+    var engine = CreateSingleTrainEngine(GameStyle.Regular);
+    var train = engine.Trains.Single();
+    var central = engine.StationsForRoute(train.RouteId).First(station => station.GroupId == "central");
+    var arrivals = 0;
+    var departures = 0;
+    engine.TrainStationChanged += (_, station, doorsOpening) =>
+    {
+        Equal(central.Name, station.Name);
+        if (doorsOpening) arrivals++;
+        else departures++;
+    };
+
+    RunUntilAtStation(engine, train, central, 30);
+    Equal(1, arrivals);
+    Equal(0, departures);
+    Equal(PlatformIndicator.DoorsOpen, engine.PlatformIndicatorFor(train.RouteId, central));
+
+    var restored = new GameEngine(engine.Save(), GameStyle.Regular);
+    var restoredTrain = restored.Trains.Single(candidate => candidate.Id == train.Id);
+    var restoredCentral = restored.StationsForRoute(restoredTrain.RouteId)
+        .First(station => station.GroupId == "central");
+    Equal(PlatformIndicator.DoorsOpen, restored.PlatformIndicatorFor(restoredTrain.RouteId, restoredCentral));
+
+    AdvanceFor(engine, GameEngine.StationDoorOpenSeconds + 0.2);
+    Equal(PlatformIndicator.ReadyToDepart, engine.PlatformIndicatorFor(train.RouteId, central));
+    AdvanceUntil(engine, () => engine.StoppedAtStation(train) is null, 6);
+    Equal(1, departures);
+    Equal(PlatformIndicator.Clear, engine.PlatformIndicatorFor(train.RouteId, central));
+
+    var heldEngine = CreateSingleTrainEngine(GameStyle.Regular);
+    var heldTrain = heldEngine.Trains.Single();
+    var heldStation = heldEngine.StationsForRoute(heldTrain.RouteId)
+        .First(station => station.GroupId == "central");
+    var departureSignal = heldEngine.Signals.Single(signal =>
+        signal.Id == "ST01D" && signal.RouteId == "common");
+    Check(heldEngine.SetSignalAspect(departureSignal.Id, SignalAspect.Red),
+        "The station departure signal should be controllable.");
+    RunUntilAtStation(heldEngine, heldTrain, heldStation, 30);
+    AdvanceFor(heldEngine, GameEngine.StationDelayedSeconds + 1);
+    Equal(PlatformIndicator.Delayed, heldEngine.PlatformIndicatorFor(heldTrain.RouteId, heldStation));
+    Check(heldEngine.StoppedAtStation(heldTrain) is not null,
+        "A red departure signal must hold the train at the platform.");
+    heldEngine.SetSignalAspect(departureSignal.Id, SignalAspect.Green);
+    AdvanceUntil(heldEngine, () => heldEngine.StoppedAtStation(heldTrain) is null, 2);
+    Equal(PlatformIndicator.Clear, heldEngine.PlatformIndicatorFor(heldTrain.RouteId, heldStation));
 }
 
 static void TrainEntryIsReported()
@@ -306,6 +384,18 @@ static void GameStylesPersistIndependently()
     Equal(GameStyle.Regular, regularSave.Style);
     Equal(GameStyle.Original, new GameEngine(originalSave).Style);
     Equal(GameStyle.Regular, new GameEngine(regularSave, GameStyle.Regular).Style);
+
+    var previousRegularTrains = regularSave.Trains!.Take(3).ToArray();
+    var previousRegularSave = regularSave with
+    {
+        Version = 3,
+        Train = previousRegularTrains[0],
+        Trains = previousRegularTrains,
+        Signals = regularSave.Signals.Take(10).ToArray()
+    };
+    var migratedRegular = new GameEngine(previousRegularSave, GameStyle.Regular);
+    Equal(GameStyle.Regular, migratedRegular.Style);
+    Equal(5, migratedRegular.RouteCount);
 }
 
 static void LegacySavesMigrate()
@@ -420,10 +510,10 @@ static void RunUntilStopped(GameEngine engine, double seconds)
         engine.Advance(1d / 60);
 }
 
-static GameEngine CreateSingleTrainEngine()
+static GameEngine CreateSingleTrainEngine(GameStyle style = GameStyle.Original)
 {
-    var source = new GameEngine();
-    var train = source.Save().Train with
+    var source = new GameEngine(style: style);
+    var train = source.Save().Trains!.First(train => train.RouteId == "main") with
     {
         Distance = 0,
         Id = "TR99",
@@ -431,7 +521,25 @@ static GameEngine CreateSingleTrainEngine()
         Stopped = false,
         Status = "In service"
     };
-    return new GameEngine(source.Save() with { Train = train, Trains = [train] });
+    return new GameEngine(source.Save() with { Train = train, Trains = [train] }, style);
+}
+
+static void RunUntilAtStation(GameEngine engine, TrainService train, StationInfo station, double seconds)
+{
+    AdvanceUntil(engine, () => engine.StoppedAtStation(train)?.Name == station.Name, seconds);
+}
+
+static void AdvanceUntil(GameEngine engine, Func<bool> condition, double seconds)
+{
+    for (var index = 0; index < seconds * 60 && !condition(); index++)
+        engine.Advance(1d / 60);
+    Check(condition(), $"The expected train state was not reached within {seconds:0} seconds.");
+}
+
+static void AdvanceFor(GameEngine engine, double seconds)
+{
+    for (var index = 0; index < seconds * 60; index++)
+        engine.Advance(1d / 60);
 }
 
 static void RunUntilBalance(GameEngine engine, int expected, double seconds)

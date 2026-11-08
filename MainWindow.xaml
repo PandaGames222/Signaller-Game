@@ -76,7 +76,7 @@
                         <DropShadowEffect BlurRadius="8" ShadowDepth="0" Opacity="0.8" Color="#73E0B0" />
                     </Ellipse.Effect>
                 </Ellipse>
-                <TextBlock x:Name="VersionText" Text="VERSION 1.5.0" Foreground="#82909D"
+                <TextBlock x:Name="VersionText" Text="VERSION 1.6.0" Foreground="#82909D"
                            FontSize="9" VerticalAlignment="Center" />
                 <Button x:Name="UpdateButton" Content="UPDATE" Margin="10,0,0,0"
                         Padding="9,7" FontSize="9" Click="UpdateButton_Click"
@@ -287,30 +287,36 @@
                                                        Foreground="#82909D" FontSize="8"
                                                        VerticalAlignment="Center" />
                                             <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,8,0">
-                                                    <Ellipse Width="6" Height="6" Margin="0,0,4,0"
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,7,0">
+                                                    <Ellipse Width="6" Height="6" Margin="0,0,3,0"
                                                              Fill="#73E0B0" />
                                                     <TextBlock Text="GREEN" Foreground="#82909D"
                                                                FontSize="7" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,8,0">
-                                                    <Ellipse Width="6" Height="6" Margin="0,0,4,0"
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,7,0">
+                                                    <Ellipse Width="6" Height="6" Margin="0,0,3,0"
                                                              Fill="#F5BB61" />
                                                     <TextBlock Text="YELLOW" Foreground="#82909D"
                                                                FontSize="7" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,8,0">
-                                                    <Ellipse Width="6" Height="6" Margin="0,0,4,0"
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,7,0">
+                                                    <Ellipse Width="6" Height="6" Margin="0,0,3,0"
                                                              Fill="#F26B72" />
-                                                    <TextBlock Text="STOP" Foreground="#82909D"
+                                                    <TextBlock Text="RED" Foreground="#82909D"
                                                                FontSize="7" />
                                                 </StackPanel>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <Border Width="10" Height="5" Margin="0,0,4,0"
-                                                            CornerRadius="2" Background="#F5BB61" />
-                                                    <TextBlock Text="TRAIN" Foreground="#82909D"
-                                                               FontSize="7" />
-                                                </StackPanel>
+                                                <Border Width="7" Height="5" Margin="0,0,3,0"
+                                                        CornerRadius="1" Background="White" />
+                                                <TextBlock Text="DOORS" Foreground="#82909D"
+                                                           FontSize="7" Margin="0,0,7,0" />
+                                                <Border Width="7" Height="5" Margin="0,0,3,0"
+                                                        CornerRadius="1" Background="#F5BB61" />
+                                                <TextBlock Text="READY" Foreground="#82909D"
+                                                           FontSize="7" Margin="0,0,7,0" />
+                                                <Border Width="7" Height="5" Margin="0,0,3,0"
+                                                        CornerRadius="1" Background="#F26B72" />
+                                                <TextBlock Text="30+S" Foreground="#82909D"
+                                                           FontSize="7" />
                                             </StackPanel>
                                         </Grid>
                                         <local:RailwaySurface x:Name="RegularRailway"
@@ -416,7 +422,7 @@
                                                FontSize="11" FontWeight="SemiBold" />
                                 </StackPanel>
                             </Grid>
-                            <TextBlock Text="NEXT STOP" Margin="0,12,0,3" Foreground="#82909D" FontSize="8" />
+                            <TextBlock Text="CURRENT / NEXT STOP" Margin="0,12,0,3" Foreground="#82909D" FontSize="8" />
                             <TextBlock x:Name="TrainInfoNextStation" Text="Greyfield Central · Platform 1"
                                        FontSize="11" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock Text="ROUTE / DESTINATION" Margin="0,11,0,3"
@@ -512,7 +518,7 @@
             <TextBlock Text="Signaller" Foreground="#71808C" FontSize="9"
                        VerticalAlignment="Center">
                 <Run Text="v" />
-                <Run x:Name="FooterVersion" Text="1.5.0" Foreground="#89959E" />
+                <Run x:Name="FooterVersion" Text="1.6.0" Foreground="#89959E" />
             </TextBlock>
             <TextBlock Text="SAFE WORKING. EVERY JOURNEY." Foreground="#71808C" FontSize="8"
                        HorizontalAlignment="Right" VerticalAlignment="Center" />
@@ -630,9 +636,9 @@
                                           Checked="EntrySoundCheckBox_Changed"
                                           Unchecked="EntrySoundCheckBox_Changed" />
                                 <StackPanel>
-                                    <TextBlock Text="Train entry chime" FontSize="12"
+                                    <TextBlock Text="Train and station sounds" FontSize="12"
                                                FontWeight="SemiBold" />
-                                    <TextBlock Text="Play a sound when a service enters the control area."
+                                    <TextBlock Text="Play a chime on entry and sounds when trains arrive or depart stations."
                                                Margin="0,4,0,0" Foreground="#82909D" FontSize="10"
                                                TextWrapping="Wrap" />
                                 </StackPanel>

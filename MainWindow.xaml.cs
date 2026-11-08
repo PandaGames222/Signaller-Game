@@ -43,6 +43,7 @@ public partial class MainWindow : Window
         _engine = engine;
         Railway.Engine = _engine;
         _engine.TrainEnteredZone += Engine_TrainEnteredZone;
+        _engine.TrainStationChanged += Engine_TrainStationChanged;
         try
         {
             _soundEnabled = AppSettingsStore.Load().TrainEntrySoundEnabled;
@@ -57,7 +58,7 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning);
         }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.5.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.6.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
         _loadingSettings = true;
         EntrySoundCheckBox.IsChecked = _soundEnabled;
@@ -102,6 +103,8 @@ public partial class MainWindow : Window
         if (_inGame && !_engine.IsPaused && _engine.Mode == GameMode.Signaller
             && _engine.Style == GameStyle.Original)
             Railway.InvalidateVisual();
+        if (_inGame && _engine.Style == GameStyle.Regular)
+            RegularRailway.InvalidateVisual();
         RefreshHud();
         RefreshTrainDetails();
         RefreshSignalDetails();
@@ -285,8 +288,10 @@ public partial class MainWindow : Window
             if (!ReferenceEquals(_engine, nextEngine))
             {
                 _engine.TrainEnteredZone -= Engine_TrainEnteredZone;
+                _engine.TrainStationChanged -= Engine_TrainStationChanged;
                 _engine = nextEngine;
                 _engine.TrainEnteredZone += Engine_TrainEnteredZone;
+                _engine.TrainStationChanged += Engine_TrainStationChanged;
                 Railway.Engine = _engine;
             }
 
@@ -431,6 +436,14 @@ public partial class MainWindow : Window
                 Foreground = new SolidColorBrush(Color.FromRgb(160, 174, 181)),
                 FontSize = 8
             });
+            content.Children.Add(new TextBlock
+            {
+                Text = string.Join("  ·  ", _engine.StationsForRoute(route.Id).Select(station => station.Name)),
+                Margin = new Thickness(0, 5, 0, 0),
+                Foreground = new SolidColorBrush(Color.FromRgb(130, 144, 157)),
+                FontSize = 7,
+                TextWrapping = TextWrapping.Wrap
+            });
             card.Child = content;
             RegularRoutesPanel.Children.Add(card);
         }
@@ -468,7 +481,7 @@ public partial class MainWindow : Window
             };
             Grid.SetColumn(service, 1);
             row.Children.Add(service);
-            var nextStation = _engine.NextStation(train);
+            var nextStation = _engine.StoppedAtStation(train) ?? _engine.NextStation(train);
             var destination = new TextBlock
             {
                 Text = nextStation?.Platform ?? "EXIT",
@@ -581,7 +594,7 @@ public partial class MainWindow : Window
             if (changed) SaveGame();
             DisplayLatestNotification();
             RefreshHud();
-            Railway.InvalidateVisual();
+            railway.InvalidateVisual();
             return;
         }
 
@@ -618,13 +631,13 @@ public partial class MainWindow : Window
             return;
 
         _engine.SetPreview(point.X, point.Y);
-        Railway.InvalidateVisual();
+        railway.InvalidateVisual();
     }
 
     private void Railway_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         _engine.ClearPreview();
-        Railway.InvalidateVisual();
+        if (sender is RailwaySurface railway) railway.InvalidateVisual();
     }
 
     private void RotateButton_Click(object sender, RoutedEventArgs e)
@@ -719,7 +732,7 @@ public partial class MainWindow : Window
         }
 
         var route = _engine.Routes.First(item => item.Id == train.RouteId);
-        var nextStation = _engine.NextStation(train);
+        var nextStation = _engine.StoppedAtStation(train) ?? _engine.NextStation(train);
         TrainInfoHeadcode.Text = train.Headcode;
         TrainInfoService.Text = train.ServiceName;
         TrainInfoType.Text = train.TrainType;
@@ -745,6 +758,13 @@ public partial class MainWindow : Window
     private void Engine_TrainEnteredZone(TrainService train)
     {
         if (_soundEnabled) SystemSounds.Asterisk.Play();
+    }
+
+    private void Engine_TrainStationChanged(TrainService train, StationInfo station, bool doorsOpening)
+    {
+        if (!_soundEnabled) return;
+        if (doorsOpening) SystemSounds.Exclamation.Play();
+        else SystemSounds.Beep.Play();
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
@@ -885,6 +905,7 @@ public partial class MainWindow : Window
         _updaterCleanupTimer.Stop();
         _updater.Dispose();
         _engine.TrainEnteredZone -= Engine_TrainEnteredZone;
+        _engine.TrainStationChanged -= Engine_TrainStationChanged;
         _windowLifetime.Dispose();
     }
 
@@ -1113,23 +1134,76 @@ public sealed class RailwaySurface : FrameworkElement
     {
         var stationPen = CreateFrozenPen(Color.FromRgb(80, 99, 108), 1);
         var markerPen = CreateFrozenPen(Color.FromRgb(115, 224, 176), 1.4);
-        foreach (var route in engine.Routes)
-        foreach (var station in engine.StationsForRoute(route.Id))
+        if (engine.Style == GameStyle.Original)
         {
-            var position = engine.PositionAt(route.Id, station.Distance);
+            foreach (var route in engine.Routes)
+            foreach (var station in engine.StationsForRoute(route.Id))
+            {
+                var position = engine.PositionAt(route.Id, station.Distance);
+                var marker = new WpfPoint(position.X, position.Y);
+                drawingContext.DrawLine(markerPen,
+                    new WpfPoint(position.X - 11, position.Y), new WpfPoint(position.X + 11, position.Y));
+                drawingContext.DrawRoundedRectangle(
+                    new SolidColorBrush(Color.FromRgb(28, 41, 49)),
+                    stationPen,
+                    new Rect(position.X + 15, position.Y - 19, 122, 34), 6, 6);
+                drawingContext.DrawText(CreateText(station.Name.ToUpperInvariant(), 8,
+                        Color.FromRgb(209, 225, 220), FontWeights.SemiBold),
+                    new WpfPoint(position.X + 23, position.Y - 14));
+                drawingContext.DrawText(CreateText(station.Platform.ToUpperInvariant(), 7,
+                        Color.FromRgb(129, 146, 143), FontWeights.Normal),
+                    new WpfPoint(position.X + 23, position.Y + 1));
+                drawingContext.DrawEllipse(
+                    new SolidColorBrush(Color.FromRgb(115, 224, 176)), null, marker, 2.5, 2.5);
+            }
+            return;
+        }
+
+        var groups = engine.AllStations.GroupBy(item =>
+            string.IsNullOrWhiteSpace(item.Station.GroupId)
+                ? $"{item.RouteId}/{item.Station.Name}"
+                : item.Station.GroupId);
+        foreach (var group in groups)
+        {
+            var platforms = group.OrderBy(item => item.Station.Platform, StringComparer.Ordinal).ToArray();
+            var routeId = platforms[0].RouteId;
+            var station = platforms[0].Station;
+            var position = engine.PositionAt(routeId, station.Distance);
             var marker = new WpfPoint(position.X, position.Y);
             drawingContext.DrawLine(markerPen,
                 new WpfPoint(position.X - 11, position.Y), new WpfPoint(position.X + 11, position.Y));
+            var panelHeight = 19 + platforms.Length * 11;
+            var panelX = Math.Clamp(position.X + 17, 4, GameEngine.WorldWidth - 139);
+            var panelY = Math.Clamp(position.Y - panelHeight - 22, 4, GameEngine.WorldHeight - panelHeight - 4);
             drawingContext.DrawRoundedRectangle(
-                new SolidColorBrush(Color.FromRgb(28, 41, 49)),
+                new SolidColorBrush(Color.FromRgb(18, 29, 37)),
                 stationPen,
-                new Rect(position.X + 15, position.Y - 19, 122, 34), 6, 6);
-            drawingContext.DrawText(CreateText(station.Name.ToUpperInvariant(), 8,
+                new Rect(panelX, panelY, 135, panelHeight), 5, 5);
+            drawingContext.DrawText(CreateText(station.Name.ToUpperInvariant(), 7.5,
                     Color.FromRgb(209, 225, 220), FontWeights.SemiBold),
-                new WpfPoint(position.X + 23, position.Y - 14));
-            drawingContext.DrawText(CreateText(station.Platform.ToUpperInvariant(), 7,
-                    Color.FromRgb(129, 146, 143), FontWeights.Normal),
-                new WpfPoint(position.X + 23, position.Y + 1));
+                new WpfPoint(panelX + 7, panelY + 4));
+            for (var index = 0; index < platforms.Length; index++)
+            {
+                var (platformRoute, platformStation) = platforms[index];
+                var indicator = engine.PlatformIndicatorFor(platformRoute, platformStation);
+                var indicatorColor = indicator switch
+                {
+                    PlatformIndicator.DoorsOpen => Colors.White,
+                    PlatformIndicator.ReadyToDepart
+                        when (int)(engine.GameSeconds * 2) % 2 == 0 => Color.FromRgb(245, 187, 97),
+                    PlatformIndicator.ReadyToDepart => Color.FromRgb(91, 73, 46),
+                    PlatformIndicator.Delayed => Color.FromRgb(242, 107, 114),
+                    _ => Color.FromRgb(67, 83, 91)
+                };
+                var rowY = panelY + 16 + index * 11;
+                drawingContext.DrawText(CreateText(platformStation.Platform.ToUpperInvariant(), 6.5,
+                        Color.FromRgb(145, 161, 168), FontWeights.Normal),
+                    new WpfPoint(panelX + 7, rowY));
+                drawingContext.DrawRoundedRectangle(
+                    new SolidColorBrush(indicatorColor),
+                    null,
+                    new Rect(panelX + 103, rowY + 1, 21, 5), 2, 2);
+            }
             drawingContext.DrawEllipse(
                 new SolidColorBrush(Color.FromRgb(115, 224, 176)), null, marker, 2.5, 2.5);
         }
@@ -1150,6 +1224,9 @@ public sealed class RailwaySurface : FrameworkElement
         }
         DrawTextCentered(drawingContext, "AUTOMATIC JUNCTION", 820, 593, 8,
             Color.FromRgb(101, 118, 129));
+        if (engine.Style == GameStyle.Regular)
+            DrawTextCentered(drawingContext, "EAST JUNCTION", 1260, 385, 8,
+                Color.FromRgb(101, 118, 129));
     }
 
     private static void DrawSignal(DrawingContext drawingContext, GameEngine engine, Signal signal)

@@ -28,8 +28,8 @@ internal static class GameSaveStore
 
         var data = JsonSerializer.Deserialize<GameSaveData>(File.ReadAllText(path), JsonOptions)
             ?? throw new InvalidDataException("The saved game file is empty.");
-        if ((data.Version >= GameEngine.SaveVersion && data.Style != style)
-            || (data.Version < GameEngine.SaveVersion && style != GameStyle.Original))
+        if ((data.Version >= 3 && data.Style != style)
+            || (data.Version < 3 && style != GameStyle.Original))
             throw new InvalidDataException($"The saved game does not belong to {style} mode.");
         return data;
     }
