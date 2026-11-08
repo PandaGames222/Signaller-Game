@@ -37,29 +37,57 @@ public readonly record struct BuildItemDefinition(
     string Symbol,
     int Cost);
 
+public sealed record GameRoute(
+    string Id,
+    string Name,
+    string Destination,
+    string ExitName,
+    IReadOnlyList<TrackPoint> Points,
+    string EntranceName = "WEST DEPOT");
+
+public sealed record StationInfo(string Name, string Platform, double Distance);
+
 public sealed class Signal
 {
     public required string Id { get; init; }
     public required double Distance { get; init; }
     public SignalAspect Aspect { get; set; }
     public double Side { get; init; }
-}
-
-public sealed class Points
-{
-    public required string Id { get; init; }
-    public required double Distance { get; init; }
-    public PointDirection Direction { get; set; }
-    public required PointDirection AssignedDirection { get; init; }
+    public required string RouteId { get; init; }
 }
 
 public sealed record PlacedItem(
     BuildItemKind Kind,
     double X,
     double Y,
-    int Cost);
+    int Cost,
+    int Rotation = 0);
 
-public sealed record TrainSaveData(double Distance, bool Stopped, string Status);
+public sealed class TrainService
+{
+    public required string Id { get; init; }
+    public required string Headcode { get; init; }
+    public required string ServiceName { get; init; }
+    public required string TrainType { get; init; }
+    public required string RouteId { get; init; }
+    public required double Speed { get; init; }
+    public double Distance { get; set; }
+    public double LatencySeconds { get; set; }
+    public bool Stopped { get; set; }
+    public string Status { get; set; } = "In service";
+}
+
+public sealed record TrainSaveData(
+    double Distance,
+    bool Stopped,
+    string Status,
+    string Id = "TR01",
+    string Headcode = "2K14",
+    string ServiceName = "Greyfield Local",
+    string TrainType = "Class 170 Turbostar",
+    string RouteId = "main",
+    double Speed = 47,
+    double LatencySeconds = 0);
 
 public sealed record GameSaveData(
     int Version,
@@ -71,81 +99,154 @@ public sealed record GameSaveData(
     IReadOnlyList<PlacedItem> PlacedItems,
     IReadOnlyList<SignalSaveData> Signals,
     IReadOnlyList<PointsSaveData> Points,
-    TrainSaveData Train);
+    TrainSaveData Train,
+    IReadOnlyList<TrainSaveData>? Trains = null);
 
 public sealed record SignalSaveData(string Id, SignalAspect Aspect);
 public sealed record PointsSaveData(string Id, PointDirection Direction);
 
 public sealed class GameEngine
 {
-    public const double WorldWidth = 1000;
-    public const double WorldHeight = 600;
+    public const double WorldWidth = 1800;
+    public const double WorldHeight = 1100;
     public const double GridSize = 40;
-    public const int SaveVersion = 1;
+    public const int SaveVersion = 2;
     public const int StartingBalance = 5000;
-    public const double SafetyDistance = 15;
+    public const double SafetyDistance = 36;
     public const double SimulationClockRate = 3;
     public const double TrainSpeed = 47;
     public const double SectionPayment = 25;
     public const double DestinationPayment = 100;
+    public const int MaximumTrains = 5;
 
-    public static readonly TrackPoint[] MainLoop =
+    public static readonly TrackPoint[] MainRoutePoints =
     [
-        new(220, 120),
-        new(700, 120),
-        new(830, 190),
-        new(830, 370),
-        new(730, 460),
-        new(270, 460),
-        new(170, 370),
-        new(170, 210)
+        new(40, 550),
+        new(200, 550),
+        new(350, 420),
+        new(620, 420),
+        new(820, 550),
+        new(1080, 550),
+        new(1260, 420),
+        new(1510, 420),
+        new(1760, 550)
     ];
 
     public static readonly BuildItemDefinition[] BuildItems =
     [
         new(BuildItemKind.StraightTrack, "Straight track", "━", 100),
         new(BuildItemKind.CurvedTrack, "Curved track", "⌒", 100),
-        new(BuildItemKind.Switch, "Switch / points", "⑂", 500),
         new(BuildItemKind.Signal, "Signal", "●", 300),
         new(BuildItemKind.Station, "Station", "▤", 2500),
         new(BuildItemKind.Depot, "Spawner / depot", "▰", 1000)
     ];
 
-    private const double StationDistance = 1319;
-    private const double TrackOffset = 20;
-    private readonly double[] _segmentLengths;
-    private readonly double[] _segmentStartDistances;
+    private static readonly TrackPoint[] NorthRoutePoints =
+    [
+        .. MainRoutePoints.Take(5),
+        new(820, 340),
+        new(820, 70)
+    ];
+
+    private static readonly TrackPoint[] SouthRoutePoints =
+    [
+        .. MainRoutePoints.Take(5),
+        new(820, 780),
+        new(820, 1030)
+    ];
+
+    private static readonly RouteMetrics MainMetrics = MeasureRoute(MainRoutePoints);
+    private static readonly RouteMetrics NorthMetrics = MeasureRoute(NorthRoutePoints);
+    private static readonly RouteMetrics SouthMetrics = MeasureRoute(SouthRoutePoints);
+    private static readonly double JunctionDistance = MainMetrics.Starts[4];
+    private static readonly double SharedTrackLength = MainMetrics.Starts[4] + SafetyDistance * 2;
+    private static readonly string[] RouteIds = ["main", "north", "south"];
+    private static readonly string[] ServiceNames =
+    [
+        "Greyfield Local",
+        "North Quay Express",
+        "Canal Park Shuttle",
+        "Portside Connector",
+        "Riverside Regional"
+    ];
+    private static readonly string[] Headcodes = ["2K14", "1N26", "5C08", "2P42", "1R17"];
+    private static readonly string[] TrainTypes =
+    [
+        "Class 170 Turbostar",
+        "Class 185 Desiro",
+        "Class 195 Civity",
+        "Class 350 Desiro",
+        "Class 158 Express Sprinter"
+    ];
+    private static readonly double[] ServiceSpeeds = [44, 49, 42, 47, 45];
+
+    private readonly Dictionary<string, RouteMetrics> _metrics;
+    private readonly Dictionary<string, List<StationInfo>> _stations;
+    private readonly List<GameRoute> _routes = [];
+    private readonly List<GameRoute> _availableRoutes = [];
+    private readonly List<Signal> _signals = [];
+    private readonly HashSet<(double X, double Y)> _operationalSignalLocations = [];
+    private readonly List<TrainService> _trains = [];
     private readonly Queue<(double Time, double Amount)> _recentEarnings = new();
     private readonly List<string> _notifications = [];
     private double _previewX = double.NaN;
     private double _previewY = double.NaN;
+    private double _spawnCountdown = 10;
+    private int _nextTrainNumber = 6;
 
     public GameEngine(GameSaveData? save = null)
     {
-        (_segmentLengths, _segmentStartDistances, TrackLength) = MeasureLoop();
-        Signals =
+        _routes.AddRange(
         [
-            new() { Id = "S1", Distance = 300, Aspect = SignalAspect.Green, Side = -1 },
-            new() { Id = "S2", Distance = 710, Aspect = SignalAspect.Green, Side = 1 }
-        ];
-        Switches =
-        [
-            new()
-            {
-                Id = "P1",
-                Distance = 480,
-                Direction = PointDirection.Straight,
-                AssignedDirection = PointDirection.Straight
-            }
-        ];
+            new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
+            new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", NorthRoutePoints),
+            new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", SouthRoutePoints)
+        ]);
+        _availableRoutes.AddRange(_routes);
+        _metrics = new Dictionary<string, RouteMetrics>(StringComparer.Ordinal)
+        {
+            ["main"] = MainMetrics,
+            ["north"] = NorthMetrics,
+            ["south"] = SouthMetrics
+        };
+        TrackLength = MainMetrics.Total;
+        var northQuayDistance = NorthMetrics.Starts[5] + 120;
+        var canalParkDistance = SouthMetrics.Starts[5] + 100;
+        _stations = new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
+        {
+            ["main"] =
+            [
+                new("Greyfield Central", "Platform 1", MainMetrics.Starts[2] + 90),
+                new("Riverside", "Platform 2", MainMetrics.Starts[6] + 80)
+            ],
+            ["north"] = [new("North Quay", "Platform 3", northQuayDistance)],
+            ["south"] = [new("Canal Park", "Platform 4", canalParkDistance)]
+        };
 
-        if (save is not null) Restore(save);
+        _signals.AddRange(
+        [
+            new() { Id = "S01", Distance = 105, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
+            new() { Id = "S02", Distance = 340, Aspect = SignalAspect.Green, Side = 1, RouteId = "common" },
+            new() { Id = "S03", Distance = 650, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
+            new() { Id = "S04", Distance = 1020, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
+            new() { Id = "S05", Distance = 1380, Aspect = SignalAspect.Green, Side = 1, RouteId = "main" },
+            new() { Id = "S06", Distance = 1770, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
+            new() { Id = "S07", Distance = NorthMetrics.Starts[5] + 50, Aspect = SignalAspect.Green, Side = -1, RouteId = "north" },
+            new() { Id = "S08", Distance = NorthMetrics.Starts[5] + 200, Aspect = SignalAspect.Green, Side = 1, RouteId = "north" },
+            new() { Id = "S09", Distance = SouthMetrics.Starts[5] + 45, Aspect = SignalAspect.Green, Side = 1, RouteId = "south" },
+            new() { Id = "S10", Distance = SouthMetrics.Starts[5] + 180, Aspect = SignalAspect.Green, Side = -1, RouteId = "south" }
+        ]);
+
+        if (save is null)
+            CreateInitialFleet();
+        else
+            Restore(save);
     }
 
     public double TrackLength { get; }
-    public double TrainDistance { get; private set; } = 80;
-    public bool TrainStopped { get; private set; }
-    public string TrainStatus { get; private set; } = "In service";
+    public double TrainDistance => Trains.FirstOrDefault()?.Distance ?? 0;
+    public bool TrainStopped => Trains.FirstOrDefault()?.Stopped ?? false;
+    public string TrainStatus => Trains.FirstOrDefault()?.Status ?? "Waiting at the entrance";
     public int Balance { get; private set; } = StartingBalance;
     public double GameSeconds { get; private set; }
     public double RealSeconds { get; private set; }
@@ -154,12 +255,17 @@ public sealed class GameEngine
     public GameMode Mode { get; private set; } = GameMode.Signaller;
     public BuildItemKind SelectedBuildItem { get; private set; } = BuildItemKind.StraightTrack;
     public bool DemolishMode { get; private set; }
-    public IReadOnlyList<Signal> Signals { get; }
-    public IReadOnlyList<Points> Switches { get; }
+    public IReadOnlyList<GameRoute> Routes => _routes;
+    public IReadOnlyList<TrainService> Trains => _trains;
+    public IReadOnlyList<Signal> Signals => _signals;
     public List<PlacedItem> PlacedItems { get; } = [];
     public IReadOnlyList<string> Notifications => _notifications;
     public double PreviewX => _previewX;
     public double PreviewY => _previewY;
+    public int TrainCount => Trains.Count;
+    public int RouteCount => _availableRoutes.Count;
+    public int SelectedRotation { get; private set; }
+    public event Action<TrainService>? TrainEnteredZone;
 
     public string FormattedBalance => $"${Balance:N0}";
 
@@ -194,18 +300,22 @@ public sealed class GameEngine
         return distance > 0 && distance <= advance;
     }
 
-    public TrackPosition PositionAt(double distance)
+    public TrackPosition PositionAt(double distance) => PositionAt("main", distance);
+
+    public TrackPosition PositionAt(string routeId, double distance)
     {
-        distance = NormalizeDistance(distance, TrackLength);
-        for (var index = 0; index < _segmentLengths.Length; index++)
+        var route = GetRoute(routeId);
+        var metrics = _metrics[route.Id];
+        distance = Math.Clamp(distance, 0, metrics.Total);
+        for (var index = 0; index < metrics.Lengths.Length; index++)
         {
-            var end = _segmentStartDistances[index] + _segmentLengths[index];
-            if (distance <= end || index == _segmentLengths.Length - 1)
+            var end = metrics.Starts[index] + metrics.Lengths[index];
+            if (distance <= end || index == metrics.Lengths.Length - 1)
             {
-                var start = MainLoop[index];
-                var next = MainLoop[(index + 1) % MainLoop.Length];
+                var start = route.Points[index];
+                var next = route.Points[index + 1];
                 var angle = Math.Atan2(next.Y - start.Y, next.X - start.X);
-                var progress = (distance - _segmentStartDistances[index]) / _segmentLengths[index];
+                var progress = (distance - metrics.Starts[index]) / metrics.Lengths[index];
                 return new(
                     start.X + (next.X - start.X) * progress,
                     start.Y + (next.Y - start.Y) * progress,
@@ -218,13 +328,25 @@ public sealed class GameEngine
 
     public TrackPosition SignalPosition(Signal signal)
     {
-        var position = PositionAt(signal.Distance);
-        return OffsetFromTrack(position, signal.Side * TrackOffset);
+        var routeId = signal.RouteId == "common" ? "main" : signal.RouteId;
+        return OffsetFromTrack(PositionAt(routeId, signal.Distance), signal.Side * 20);
     }
 
-    public TrackPosition SwitchPosition(Points points)
+    public StationInfo? NextStation(TrainService train)
     {
-        return PositionAt(points.Distance);
+        return _stations[train.RouteId].FirstOrDefault(station => station.Distance > train.Distance)
+            ?? new StationInfo(GetRoute(train.RouteId).Destination, GetRoute(train.RouteId).ExitName, RouteMetricsFor(train.RouteId).Total);
+    }
+
+    public IReadOnlyList<StationInfo> StationsForRoute(string routeId) => _stations[routeId];
+    public bool IsOperationalSignalItem(PlacedItem item) =>
+        _operationalSignalLocations.Contains((item.X, item.Y));
+
+    public string LatencyText(TrainService train)
+    {
+        var sign = train.LatencySeconds < 0 ? "EARLY " : train.LatencySeconds > 0 ? "LATE " : "ON TIME";
+        var seconds = (int)Math.Abs(train.LatencySeconds);
+        return train.LatencySeconds == 0 ? sign : $"{sign}{seconds / 60:D2}:{seconds % 60:D2}";
     }
 
     public void SetMode(GameMode mode)
@@ -237,6 +359,15 @@ public sealed class GameEngine
     {
         IsPaused = !IsPaused;
         _notifications.Add(IsPaused ? "Simulation paused." : "Simulation resumed.");
+    }
+
+    public bool SetSignalAspect(string id, SignalAspect aspect)
+    {
+        var signal = Signals.FirstOrDefault(signal => signal.Id == id);
+        if (signal is null || !Enum.IsDefined(aspect)) return false;
+        signal.Aspect = aspect;
+        _notifications.Add($"{signal.Id} set to {aspect.ToString().ToUpperInvariant()}.");
+        return true;
     }
 
     public bool ToggleSignal(string id)
@@ -254,18 +385,6 @@ public sealed class GameEngine
         return true;
     }
 
-    public bool ToggleSwitch(string id)
-    {
-        var points = Switches.FirstOrDefault(points => points.Id == id);
-        if (points is null) return false;
-
-        points.Direction = points.Direction == PointDirection.Straight
-            ? PointDirection.Diverging
-            : PointDirection.Straight;
-        _notifications.Add($"{points.Id} set {points.Direction.ToString().ToUpperInvariant()}.");
-        return true;
-    }
-
     public void SelectBuildItem(BuildItemKind item)
     {
         if (!BuildItems.Any(definition => definition.Kind == item))
@@ -275,15 +394,14 @@ public sealed class GameEngine
         DemolishMode = false;
     }
 
-    public void ToggleDemolishMode()
-    {
-        DemolishMode = !DemolishMode;
-    }
+    public void RotateSelectedItem() => SelectedRotation = (SelectedRotation + 90) % 360;
+
+    public void ToggleDemolishMode() => DemolishMode = !DemolishMode;
 
     public void SetPreview(double x, double y)
     {
-        _previewX = SnapToGrid(x);
-        _previewY = SnapToGrid(y);
+        _previewX = SnapToGrid(x, WorldWidth);
+        _previewY = SnapToGrid(y, WorldHeight);
     }
 
     public void ClearPreview()
@@ -303,8 +421,8 @@ public sealed class GameEngine
             return false;
         }
 
-        var snappedX = SnapToGrid(x);
-        var snappedY = SnapToGrid(y);
+        var snappedX = SnapToGrid(x, WorldWidth);
+        var snappedY = SnapToGrid(y, WorldHeight);
         if (PlacedItems.Any(item => Distance(item.X - snappedX, item.Y - snappedY) < GridSize * 0.75))
         {
             _notifications.Add("That tile is already occupied.");
@@ -318,8 +436,9 @@ public sealed class GameEngine
         }
 
         Balance -= definition.Cost;
-        PlacedItems.Add(new(SelectedBuildItem, snappedX, snappedY, definition.Cost));
+        PlacedItems.Add(new(SelectedBuildItem, snappedX, snappedY, definition.Cost, SelectedRotation));
         _notifications.Add($"{definition.Name} placed for ${definition.Cost:N0}.");
+        RebuildEditorRoutes(notify: true);
         return true;
     }
 
@@ -327,8 +446,8 @@ public sealed class GameEngine
     {
         if (Mode != GameMode.Editor || !DemolishMode) return false;
 
-        var snappedX = SnapToGrid(x);
-        var snappedY = SnapToGrid(y);
+        var snappedX = SnapToGrid(x, WorldWidth);
+        var snappedY = SnapToGrid(y, WorldHeight);
         var index = -1;
         var nearest = 25d;
         for (var itemIndex = 0; itemIndex < PlacedItems.Count; itemIndex++)
@@ -353,6 +472,7 @@ public sealed class GameEngine
         var refund = removed.Cost / 2;
         Balance = (int)Math.Min(int.MaxValue, (long)Balance + refund);
         _notifications.Add($"Piece demolished — ${refund:N0} refunded.");
+        RebuildEditorRoutes(notify: true);
         return true;
     }
 
@@ -374,6 +494,8 @@ public sealed class GameEngine
 
     public GameSaveData Save()
     {
+        var trains = Trains.Select(ToSaveData).ToArray();
+        var primaryTrain = trains.FirstOrDefault() ?? new TrainSaveData(0, false, "Waiting at the entrance");
         return new(
             SaveVersion,
             Mode,
@@ -383,8 +505,9 @@ public sealed class GameEngine
             _recentEarnings.Sum(earning => earning.Amount),
             PlacedItems.ToArray(),
             Signals.Select(signal => new SignalSaveData(signal.Id, signal.Aspect)).ToArray(),
-            Switches.Select(points => new PointsSaveData(points.Id, points.Direction)).ToArray(),
-            new(TrainDistance, TrainStopped, TrainStatus));
+            [],
+            primaryTrain,
+            trains);
     }
 
     public IReadOnlyList<string> DrainNotifications()
@@ -394,101 +517,443 @@ public sealed class GameEngine
         return notifications;
     }
 
+    private void CreateInitialFleet()
+    {
+        var trains = new List<TrainService>(MaximumTrains);
+        for (var index = 0; index < MaximumTrains; index++)
+        {
+            var profileIndex = index % ServiceNames.Length;
+            trains.Add(CreateTrain(
+                profileIndex,
+                index * 155,
+                $"TR{index + 1:D2}",
+                stopped: false,
+                "In service",
+                latencySeconds: index % 2 == 0 ? 0 : 20));
+        }
+
+        _trains.AddRange(trains);
+    }
+
+    private void RebuildEditorRoutes(bool notify)
+    {
+        var previousAvailableRouteIds = _availableRoutes
+            .Select(route => route.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var existingSignalAspects = _signals
+            .Where(signal => signal.RouteId.StartsWith("editor-", StringComparison.Ordinal))
+            .ToDictionary(signal => signal.Id, signal => signal.Aspect, StringComparer.Ordinal);
+        _signals.RemoveAll(signal => signal.RouteId.StartsWith("editor-", StringComparison.Ordinal));
+        _operationalSignalLocations.Clear();
+        var oldPositions = _trains
+            .Where(train => train.RouteId.StartsWith("editor-", StringComparison.Ordinal))
+            .ToDictionary(train => train.Id, train => PositionAt(train.RouteId, train.Distance));
+        var editorRoutes = BuildEditorRoutes();
+        var editorRouteIds = editorRoutes.Select(route => route.Id).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var route in _routes.Where(route => route.Id.StartsWith("editor-", StringComparison.Ordinal)).ToArray())
+        {
+            _routes.Remove(route);
+            _metrics.Remove(route.Id);
+            _stations.Remove(route.Id);
+        }
+
+        foreach (var route in editorRoutes)
+        {
+            _routes.Add(route);
+            var metrics = MeasureRoute(route.Points);
+            _metrics.Add(route.Id, metrics);
+            _stations.Add(route.Id, [new("User-built station", "Platform 1", metrics.Total)]);
+            if (notify && !previousAvailableRouteIds.Contains(route.Id))
+                _notifications.Add($"Operational service opened: {route.EntranceName} to {route.Destination}.");
+        }
+
+        foreach (var item in PlacedItems
+            .Where(item => item.Kind == BuildItemKind.Signal)
+            .OrderBy(item => item.Y)
+            .ThenBy(item => item.X))
+        {
+            var nearestRoute = editorRoutes
+                .Select(route => (Route: route, Projection: ProjectToRoute(route.Id, item.X, item.Y)))
+                .Where(candidate => candidate.Projection.DistanceSquared <= 50 * 50)
+                .OrderBy(candidate => candidate.Projection.DistanceSquared)
+                .FirstOrDefault();
+            if (nearestRoute.Route is null) continue;
+
+            var id = $"E{(int)item.X:D4}-{(int)item.Y:D4}";
+            _signals.Add(new Signal
+            {
+                Id = id,
+                RouteId = nearestRoute.Route.Id,
+                Distance = nearestRoute.Projection.Distance,
+                Side = nearestRoute.Projection.Side,
+                Aspect = existingSignalAspects.GetValueOrDefault(id, SignalAspect.Green)
+            });
+            _operationalSignalLocations.Add((item.X, item.Y));
+        }
+
+        _availableRoutes.Clear();
+        _availableRoutes.AddRange(_routes);
+        if (notify && previousAvailableRouteIds.Any(id =>
+            id.StartsWith("editor-", StringComparison.Ordinal) && !_availableRoutes.Any(route => route.Id == id)))
+            _notifications.Add("An editor route was disconnected. Trains on it were withdrawn safely.");
+
+        foreach (var train in _trains
+            .Where(train => train.RouteId.StartsWith("editor-", StringComparison.Ordinal))
+            .ToArray())
+        {
+            if (!editorRouteIds.Contains(train.RouteId) || !oldPositions.TryGetValue(train.Id, out var position))
+            {
+                _trains.Remove(train);
+                _notifications.Add($"{train.Headcode} was withdrawn because its editor route is no longer connected.");
+                continue;
+            }
+
+            train.Distance = NearestDistanceOnRoute(train.RouteId, position);
+        }
+    }
+
+    private List<GameRoute> BuildEditorRoutes()
+    {
+        var trackTiles = PlacedItems
+            .Where(item => item.Kind is BuildItemKind.StraightTrack or BuildItemKind.CurvedTrack)
+            .ToDictionary(item => new GridCell((int)item.X, (int)item.Y));
+        var routes = new List<GameRoute>();
+        var depots = PlacedItems.Where(item => item.Kind == BuildItemKind.Depot);
+        var stations = PlacedItems.Where(item => item.Kind == BuildItemKind.Station);
+
+        foreach (var depot in depots)
+        foreach (var station in stations)
+        {
+            var path = FindEditorTrackPath(depot, station, trackTiles);
+            if (path is null) continue;
+
+            var depotX = ((int)depot.X).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var depotY = ((int)depot.Y).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var stationX = ((int)station.X).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var stationY = ((int)station.Y).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var points = new List<TrackPoint>(path.Count + 2)
+            {
+                new(depot.X, depot.Y)
+            };
+            points.AddRange(path.Select(cell => new TrackPoint(cell.X, cell.Y)));
+            points.Add(new(station.X, station.Y));
+            routes.Add(new(
+                $"editor-{depotX}-{depotY}-{stationX}-{stationY}",
+                "EDITOR SERVICE",
+                $"Station {stationX},{stationY}",
+                "USER-BUILT EXIT",
+                points,
+                $"Depot {depotX},{depotY}"));
+        }
+
+        return routes;
+    }
+
+    private static List<GridCell>? FindEditorTrackPath(
+        PlacedItem depot,
+        PlacedItem station,
+        IReadOnlyDictionary<GridCell, PlacedItem> trackTiles)
+    {
+        var startCells = GetTerminalTrackCells(depot, trackTiles);
+        var destinationCells = GetTerminalTrackCells(station, trackTiles).ToHashSet();
+        if (startCells.Count == 0 || destinationCells.Count == 0) return null;
+
+        var parents = new Dictionary<GridCell, GridCell?>();
+        var queue = new Queue<GridCell>();
+        foreach (var cell in startCells)
+        {
+            if (!parents.TryAdd(cell, null)) continue;
+            queue.Enqueue(cell);
+        }
+
+        GridCell? destination = null;
+        while (queue.TryDequeue(out var current))
+        {
+            if (destinationCells.Contains(current))
+            {
+                destination = current;
+                break;
+            }
+
+            var tile = trackTiles[current];
+            foreach (var (direction, neighbor) in GetTrackNeighbors(current, tile, trackTiles))
+            {
+                if (!parents.TryAdd(neighbor, current)) continue;
+                queue.Enqueue(neighbor);
+            }
+        }
+
+        if (destination is null) return null;
+        var path = new List<GridCell>();
+        var cellInPath = destination.Value;
+        while (true)
+        {
+            path.Add(cellInPath);
+            if (parents[cellInPath] is not { } parent) break;
+            cellInPath = parent;
+        }
+        path.Reverse();
+        return path;
+    }
+
+    private static List<GridCell> GetTerminalTrackCells(
+        PlacedItem terminal,
+        IReadOnlyDictionary<GridCell, PlacedItem> trackTiles)
+    {
+        var cells = new List<GridCell>();
+        var terminalCell = new GridCell((int)terminal.X, (int)terminal.Y);
+        foreach (var direction in TrackDirections.All)
+        {
+            var neighbor = terminalCell.Offset(direction);
+            if (!trackTiles.TryGetValue(neighbor, out var tile)
+                || !TrackPorts(tile).Contains(TrackDirections.Opposite(direction)))
+                continue;
+            cells.Add(neighbor);
+        }
+        return cells;
+    }
+
+    private static IEnumerable<(TrackDirection Direction, GridCell Cell)> GetTrackNeighbors(
+        GridCell cell,
+        PlacedItem tile,
+        IReadOnlyDictionary<GridCell, PlacedItem> trackTiles)
+    {
+        foreach (var direction in TrackPorts(tile))
+        {
+            var neighbor = cell.Offset(direction);
+            if (trackTiles.TryGetValue(neighbor, out var adjacent)
+                && TrackPorts(adjacent).Contains(TrackDirections.Opposite(direction)))
+                yield return (direction, neighbor);
+        }
+    }
+
+    private static TrackDirection[] TrackPorts(PlacedItem tile)
+    {
+        if (tile.Kind == BuildItemKind.StraightTrack)
+            return tile.Rotation is 0 or 180
+                ? [TrackDirection.East, TrackDirection.West]
+                : [TrackDirection.North, TrackDirection.South];
+
+        return tile.Rotation switch
+        {
+            90 => [TrackDirection.East, TrackDirection.South],
+            180 => [TrackDirection.South, TrackDirection.West],
+            270 => [TrackDirection.West, TrackDirection.North],
+            _ => [TrackDirection.North, TrackDirection.East]
+        };
+    }
+
+    private double NearestDistanceOnRoute(string routeId, TrackPosition position)
+    {
+        return ProjectToRoute(routeId, position.X, position.Y).Distance;
+    }
+
+    private RouteProjection ProjectToRoute(string routeId, double x, double y)
+    {
+        var route = GetRoute(routeId);
+        var metrics = _metrics[routeId];
+        var nearestDistance = 0d;
+        var nearestDistanceSquared = double.PositiveInfinity;
+        var nearestPoint = new TrackPosition(0, 0, 0);
+        var nearestSide = -1d;
+        for (var index = 0; index < route.Points.Count - 1; index++)
+        {
+            var start = route.Points[index];
+            var end = route.Points[index + 1];
+            var dx = end.X - start.X;
+            var dy = end.Y - start.Y;
+            var progress = Math.Clamp(
+                ((x - start.X) * dx + (y - start.Y) * dy)
+                / (dx * dx + dy * dy),
+                0,
+                1);
+            var projectedX = start.X + progress * dx;
+            var projectedY = start.Y + progress * dy;
+            var distanceSquared = (x - projectedX) * (x - projectedX) + (y - projectedY) * (y - projectedY);
+            if (distanceSquared >= nearestDistanceSquared) continue;
+            nearestDistanceSquared = distanceSquared;
+            nearestDistance = metrics.Starts[index] + metrics.Lengths[index] * progress;
+            var angle = Math.Atan2(dy, dx);
+            nearestPoint = new(projectedX, projectedY, angle);
+            nearestSide = dx * (y - projectedY) - dy * (x - projectedX) >= 0 ? 1 : -1;
+        }
+        return new(nearestDistance, nearestDistanceSquared, nearestPoint, nearestSide);
+    }
+
     private void AdvanceStep(double deltaSeconds)
     {
         RealSeconds += deltaSeconds;
         GameSeconds += deltaSeconds;
+        var crossedTrains = new List<TrainService>();
+        var finishedTrains = new List<TrainService>();
+        var earnings = 0d;
 
-        var obstacle = FindNextObstacle();
-        var caution = NextSignalAspect() == SignalAspect.Yellow ? 0.55 : 1;
-        var advance = TrainSpeed * caution * deltaSeconds;
-        TrainStopped = false;
-
-        if (obstacle is not null && obstacle.Value.Distance <= SafetyDistance + advance)
+        foreach (var train in Trains.OrderByDescending(train => train.Distance).ToArray())
         {
-            var distanceToStop = Math.Max(0, obstacle.Value.Distance - SafetyDistance);
-            TrainDistance = NormalizeDistance(TrainDistance + distanceToStop, TrackLength);
-            TrainStopped = true;
-            TrainStatus = obstacle.Value.Type == ObstacleType.Signal
-                ? $"Held at signal {obstacle.Value.Id}"
-                : $"Points {obstacle.Value.Id} misaligned";
-        }
-        else
-        {
-            var previousDistance = TrainDistance;
-            TrainDistance = NormalizeDistance(TrainDistance + advance, TrackLength);
-            if (TrainStopped) TrainStatus = "In service";
+            var route = GetRoute(train.RouteId);
+            var routeLength = RouteMetricsFor(train.RouteId).Total;
+            if (train.Distance >= routeLength)
+            {
+                finishedTrains.Add(train);
+                _notifications.Add($"{train.Headcode} departed the zone at {route.ExitName}.");
+                continue;
+            }
 
-            var sectionPayment = 0d;
-            foreach (var signal in Signals)
+            var caution = NextSignalAspect(train) == SignalAspect.Yellow ? 0.55 : 1;
+            var advance = train.Speed * caution * deltaSeconds;
+            var obstacle = FindNextObstacle(train);
+            var followingGap = FindFollowingTrainGap(train);
+            var obstacleDistance = obstacle?.Distance ?? double.PositiveInfinity;
+            var followingIsClosest = followingGap is { } gap && gap < obstacleDistance;
+            if (followingIsClosest && followingGap is { } safeGap)
+                obstacleDistance = safeGap;
+
+            train.Stopped = obstacleDistance <= SafetyDistance + advance;
+            if (train.Stopped)
+            {
+                var distanceToStop = Math.Max(0, obstacleDistance - SafetyDistance);
+                train.Distance = Math.Min(routeLength, train.Distance + distanceToStop);
+                train.LatencySeconds += deltaSeconds;
+                train.Status = !followingIsClosest && obstacle is not null
+                    ? $"Held at signal {obstacle.Value.Id}"
+                    : followingIsClosest
+                        ? "Regulating behind traffic"
+                        : "Approaching a red signal";
+                continue;
+            }
+
+            var previousDistance = train.Distance;
+            train.Distance = Math.Min(routeLength, train.Distance + advance);
+            train.Status = train.LatencySeconds > 60 ? "Delayed in service" : "In service";
+
+            foreach (var signal in Signals.Where(signal => IsSignalOnTrainRoute(signal, train)))
             {
                 if (signal.Aspect != SignalAspect.Red
-                    && CrossedMarker(previousDistance, signal.Distance, advance, TrackLength))
+                    && CrossedOpenMarker(previousDistance, signal.Distance, advance))
                 {
-                    sectionPayment += SectionPayment;
-                    _notifications.Add($"Safe passage at {signal.Id} — ${SectionPayment:N0} section payment.");
+                    earnings += SectionPayment;
+                    _notifications.Add($"{train.Headcode} safely passed {signal.Id} — ${SectionPayment:N0}.");
                 }
             }
 
-            if (CrossedMarker(previousDistance, StationDistance, advance, TrackLength))
+            foreach (var station in _stations[train.RouteId])
             {
-                sectionPayment += DestinationPayment;
-                _notifications.Add($"Train arrived at Greyfield Station — ${DestinationPayment:N0} destination bonus.");
+                if (CrossedOpenMarker(previousDistance, station.Distance, advance))
+                {
+                    earnings += DestinationPayment;
+                    _notifications.Add($"{train.Headcode} called at {station.Name}, {station.Platform}.");
+                }
             }
 
-            if (sectionPayment > 0)
-            {
-                Balance = (int)Math.Min(int.MaxValue, (long)Balance + (int)sectionPayment);
-                _recentEarnings.Enqueue((RealSeconds, sectionPayment));
-            }
+            if (train.Distance >= routeLength)
+                finishedTrains.Add(train);
         }
 
-        TrainStatus = TrainStopped ? TrainStatus : "In service";
-        while (_recentEarnings.TryPeek(out var earnings) && earnings.Time < RealSeconds - 60)
+        foreach (var train in finishedTrains.Distinct())
+            _trains.Remove(train);
+
+        if (earnings > 0)
+        {
+            Balance = (int)Math.Min(int.MaxValue, (long)Balance + (int)earnings);
+            _recentEarnings.Enqueue((RealSeconds, earnings));
+        }
+
+        while (_recentEarnings.TryPeek(out var oldEarning) && oldEarning.Time < RealSeconds - 60)
             _recentEarnings.Dequeue();
+
+        _spawnCountdown -= deltaSeconds;
+        if (_spawnCountdown <= 0 && Trains.Count < MaximumTrains)
+        {
+            var profileIndex = (_nextTrainNumber - 1) % ServiceNames.Length;
+            var route = _availableRoutes[(_nextTrainNumber - 1) % _availableRoutes.Count];
+            var train = CreateTrain(
+                profileIndex,
+                0,
+                $"TR{_nextTrainNumber++:D2}",
+                false,
+                "Entering the control area",
+                0,
+                route.Id);
+            _trains.Add(train);
+            crossedTrains.Add(train);
+            _notifications.Add($"{train.Headcode} entered the control area from {route.EntranceName}.");
+            _spawnCountdown = 8;
+        }
+
+        foreach (var train in crossedTrains)
+            TrainEnteredZone?.Invoke(train);
+    }
+
+    private double? FindFollowingTrainGap(TrainService train)
+    {
+        var ahead = Trains
+            .Where(other => other.Id != train.Id && IsOnSameTrackSection(train, other))
+            .Select(other => other.Distance - train.Distance)
+            .Where(distance => distance > 0)
+            .DefaultIfEmpty(double.PositiveInfinity)
+            .Min();
+        return double.IsPositiveInfinity(ahead) ? null : ahead;
+    }
+
+    private bool IsOnSameTrackSection(TrainService first, TrainService second)
+    {
+        return first.RouteId == second.RouteId
+            || first.RouteId is "main" or "north" or "south"
+            && second.RouteId is "main" or "north" or "south"
+            && first.Distance < SharedTrackLength && second.Distance < SharedTrackLength;
+    }
+
+    private bool IsSignalOnTrainRoute(Signal signal, TrainService train)
+    {
+        return signal.RouteId == train.RouteId
+            || (signal.RouteId == "common" && train.Distance < JunctionDistance);
+    }
+
+    private SignalAspect NextSignalAspect(TrainService train)
+    {
+        return Signals
+            .Where(signal => IsSignalOnTrainRoute(signal, train))
+            .Select(signal => new
+            {
+                signal.Aspect,
+                Distance = signal.Distance - train.Distance
+            })
+            .Where(item => item.Distance > 0)
+            .OrderBy(item => item.Distance)
+            .Select(item => item.Aspect)
+            .FirstOrDefault(SignalAspect.Green);
+    }
+
+    private Obstacle? FindNextObstacle(TrainService train)
+    {
+        return Signals
+            .Where(signal => signal.Aspect == SignalAspect.Red && IsSignalOnTrainRoute(signal, train))
+            .Select(signal => new Obstacle(signal.Distance - train.Distance, signal.Id))
+            .Where(obstacle => obstacle.Distance > 0)
+            .OrderBy(obstacle => obstacle.Distance)
+            .Select(obstacle => (Obstacle?)obstacle)
+            .FirstOrDefault();
     }
 
     private void Restore(GameSaveData save)
     {
-        if (save.Version != SaveVersion)
+        if (save.Version is < 1 or > SaveVersion)
             throw new InvalidDataException($"Unsupported save version {save.Version}.");
         if (save.Train is null || save.Signals is null || save.Points is null || save.PlacedItems is null
             || string.IsNullOrWhiteSpace(save.Train.Status)
             || save.Balance < 0 || !double.IsFinite(save.GameSeconds) || save.GameSeconds < 0
             || !double.IsFinite(save.RealSeconds) || save.RealSeconds < 0
             || save.EarnedInWindow < 0 || !double.IsFinite(save.EarnedInWindow)
-            || !double.IsFinite(save.Train.Distance))
+            || (save.Trains is not null && save.Trains.Count > 100))
             throw new InvalidDataException("The saved game contains invalid values.");
 
-        Balance = save.Balance;
         if (!Enum.IsDefined(save.Mode))
             throw new InvalidDataException("The saved game contains an invalid game mode.");
+        Balance = save.Balance;
         Mode = save.Mode;
         GameSeconds = save.GameSeconds;
         RealSeconds = save.RealSeconds;
-        TrainDistance = NormalizeDistance(save.Train.Distance, TrackLength);
-        TrainStopped = save.Train.Stopped;
-        TrainStatus = save.Train.Status;
-        foreach (var signalState in save.Signals)
-        {
-            if (signalState is null)
-                throw new InvalidDataException("The saved game contains an invalid signal.");
-            var signal = Signals.FirstOrDefault(item => item.Id == signalState.Id);
-            if (signal is null || !Enum.IsDefined(signalState.Aspect))
-                throw new InvalidDataException("The saved game contains an invalid signal.");
-            signal.Aspect = signalState.Aspect;
-        }
-
-        foreach (var switchState in save.Points)
-        {
-            if (switchState is null)
-                throw new InvalidDataException("The saved game contains invalid points.");
-            var points = Switches.FirstOrDefault(item => item.Id == switchState.Id);
-            if (points is null || !Enum.IsDefined(switchState.Direction))
-                throw new InvalidDataException("The saved game contains invalid points.");
-            points.Direction = switchState.Direction;
-        }
-
         if (save.PlacedItems.Count > 10_000)
             throw new InvalidDataException("The saved game contains too many trackside items.");
         foreach (var item in save.PlacedItems)
@@ -499,77 +964,156 @@ public sealed class GameEngine
                 .Where(buildItem => buildItem.Kind == item.Kind)
                 .Select(buildItem => (BuildItemDefinition?)buildItem)
                 .FirstOrDefault();
-            if (definition is null || definition.Value.Cost != item.Cost
+            var isLegacySwitch = save.Version == 1
+                && item.Kind == BuildItemKind.Switch
+                && item.Cost == 500;
+            if ((!isLegacySwitch && (definition is null || definition.Value.Cost != item.Cost))
                 || !double.IsFinite(item.X) || !double.IsFinite(item.Y)
-                || item.X < 0 || item.X > WorldWidth || item.Y < 0 || item.Y > WorldHeight)
+                || item.X < 0 || item.X > WorldWidth || item.Y < 0 || item.Y > WorldHeight
+                || item.Rotation is not (0 or 90 or 180 or 270))
                 throw new InvalidDataException("The saved game contains an invalid trackside item.");
-            if (IsWithinTrackClearance(item.X, item.Y)
+            if ((save.Version > 1 && IsWithinTrackClearance(item.X, item.Y))
                 || PlacedItems.Any(existing => Distance(existing.X - item.X, existing.Y - item.Y) < GridSize * 0.75))
                 throw new InvalidDataException("The saved game contains overlapping trackside items.");
             PlacedItems.Add(item);
         }
 
-        if (!double.IsFinite(save.EarnedInWindow)) return;
+        RebuildEditorRoutes(notify: false);
+        foreach (var signalState in save.Signals)
+        {
+            if (signalState is null)
+                throw new InvalidDataException("The saved game contains an invalid signal.");
+            var id = save.Version == 1
+                ? signalState.Id switch { "S1" => "S02", "S2" => "S05", _ => signalState.Id }
+                : signalState.Id;
+            var signal = Signals.FirstOrDefault(item => item.Id == id);
+            if (signal is null || !Enum.IsDefined(signalState.Aspect))
+                throw new InvalidDataException($"The saved game contains an invalid signal '{signalState.Id}'.");
+            signal.Aspect = signalState.Aspect;
+        }
+
+        var trainStates = save.Trains is { Count: > 0 } ? save.Trains : [save.Train];
+        var trains = new List<TrainService>(trainStates.Count);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var trainState in trainStates)
+        {
+            var distance = trainState is not null && save.Version == 1 && double.IsFinite(trainState.Distance)
+                ? Math.Clamp(trainState.Distance, 0, MainMetrics.Total)
+                : trainState?.Distance ?? double.NaN;
+            if (trainState is null || string.IsNullOrWhiteSpace(trainState.Status)
+                || string.IsNullOrWhiteSpace(trainState.Id) || !ids.Add(trainState.Id)
+                || string.IsNullOrWhiteSpace(trainState.Headcode)
+                || string.IsNullOrWhiteSpace(trainState.ServiceName)
+                || string.IsNullOrWhiteSpace(trainState.TrainType)
+                || !_metrics.TryGetValue(trainState.RouteId, out var metrics)
+                || !double.IsFinite(distance) || distance < 0 || distance > metrics.Total
+                || !double.IsFinite(trainState.Speed) || trainState.Speed is < 10 or > 120
+                || !double.IsFinite(trainState.LatencySeconds))
+                throw new InvalidDataException("The saved game contains an invalid train.");
+            trains.Add(new TrainService
+            {
+                Id = trainState.Id,
+                Headcode = trainState.Headcode,
+                ServiceName = trainState.ServiceName,
+                TrainType = trainState.TrainType,
+                RouteId = trainState.RouteId,
+                Speed = trainState.Speed,
+                Distance = distance,
+                LatencySeconds = trainState.LatencySeconds,
+                Stopped = trainState.Stopped,
+                Status = trainState.Status
+            });
+        }
+
+        _trains.AddRange(trains);
+        _nextTrainNumber = trains
+            .Select(train => int.TryParse(train.Id.AsSpan(2), out var number) ? number : 0)
+            .DefaultIfEmpty(0)
+            .Max() + 1;
+
         if (save.EarnedInWindow > 0) _recentEarnings.Enqueue((RealSeconds, save.EarnedInWindow));
+    }
+
+    private TrainService CreateTrain(
+        int profileIndex,
+        double distance,
+        string id,
+        bool stopped,
+        string status,
+        double latencySeconds,
+        string? routeId = null)
+    {
+        return new TrainService
+        {
+            Id = id,
+            Headcode = Headcodes[profileIndex],
+            ServiceName = ServiceNames[profileIndex],
+            TrainType = TrainTypes[profileIndex],
+            RouteId = routeId ?? RouteIds[profileIndex % RouteIds.Length],
+            Speed = ServiceSpeeds[profileIndex],
+            Distance = distance,
+            LatencySeconds = latencySeconds,
+            Stopped = stopped,
+            Status = status
+        };
+    }
+
+    private static TrainSaveData ToSaveData(TrainService train)
+    {
+        return new(
+            train.Distance,
+            train.Stopped,
+            train.Status,
+            train.Id,
+            train.Headcode,
+            train.ServiceName,
+            train.TrainType,
+            train.RouteId,
+            train.Speed,
+            train.LatencySeconds);
     }
 
     private void RecalculateIncome()
     {
-        IncomePerMinute = _recentEarnings.Sum(earnings => earnings.Amount);
+        IncomePerMinute = _recentEarnings.Sum(earning => earning.Amount);
     }
 
-    private SignalAspect NextSignalAspect()
+    private static bool CrossedOpenMarker(double from, double marker, double advance)
     {
-        return Signals
-            .Select(signal => new
-            {
-                signal.Aspect,
-                Distance = DistanceToNext(TrainDistance, signal.Distance, TrackLength)
-            })
-            .Where(item => item.Distance > 0)
-            .OrderBy(item => item.Distance)
-            .Select(item => item.Aspect)
-            .FirstOrDefault(SignalAspect.Green);
+        return advance > 0 && marker > from && marker <= from + advance;
     }
 
-    private Obstacle? FindNextObstacle()
+    private GameRoute GetRoute(string routeId)
     {
-        return Signals
-            .Where(signal => signal.Aspect == SignalAspect.Red)
-            .Select(signal => new Obstacle(
-                DistanceToNext(TrainDistance, signal.Distance, TrackLength),
-                ObstacleType.Signal,
-                signal.Id))
-            .Concat(Switches
-                .Where(points => points.Direction != points.AssignedDirection)
-                .Select(points => new Obstacle(
-                    DistanceToNext(TrainDistance, points.Distance, TrackLength),
-                    ObstacleType.Switch,
-                    points.Id)))
-            .Where(obstacle => obstacle.Distance > 0)
-            .OrderBy(obstacle => obstacle.Distance)
-            .Select(obstacle => (Obstacle?)obstacle)
-            .FirstOrDefault();
+        return Routes.FirstOrDefault(route => route.Id == routeId)
+            ?? throw new ArgumentOutOfRangeException(nameof(routeId), "Unknown railway route.");
     }
 
-    private double SnapToGrid(double coordinate)
+    private RouteMetrics RouteMetricsFor(string routeId) => _metrics[routeId];
+
+    private double SnapToGrid(double coordinate, double dimension)
     {
-        return Math.Clamp(Math.Round(coordinate / GridSize, MidpointRounding.AwayFromZero) * GridSize, 20, 980);
+        return Math.Clamp(Math.Round(coordinate / GridSize, MidpointRounding.AwayFromZero) * GridSize,
+            GridSize / 2, dimension - GridSize / 2);
     }
 
     private bool IsWithinTrackClearance(double x, double y)
     {
-        for (var index = 0; index < MainLoop.Length; index++)
+        foreach (var route in Routes.Where(route =>
+            !route.Id.StartsWith("editor-", StringComparison.Ordinal)))
         {
-            var start = MainLoop[index];
-            var end = MainLoop[(index + 1) % MainLoop.Length];
-            var dx = end.X - start.X;
-            var dy = end.Y - start.Y;
-            var lengthSquared = dx * dx + dy * dy;
-            var progress = Math.Clamp(((x - start.X) * dx + (y - start.Y) * dy) / lengthSquared, 0, 1);
-            var nearestX = start.X + progress * dx;
-            var nearestY = start.Y + progress * dy;
-            if (Distance(x - nearestX, y - nearestY) < 30) return true;
+            for (var index = 0; index < route.Points.Count - 1; index++)
+            {
+                var start = route.Points[index];
+                var end = route.Points[index + 1];
+                var dx = end.X - start.X;
+                var dy = end.Y - start.Y;
+                var lengthSquared = dx * dx + dy * dy;
+                var progress = Math.Clamp(((x - start.X) * dx + (y - start.Y) * dy) / lengthSquared, 0, 1);
+                var nearestX = start.X + progress * dx;
+                var nearestY = start.Y + progress * dy;
+                if (Distance(x - nearestX, y - nearestY) < 30) return true;
+            }
         }
 
         return false;
@@ -583,35 +1127,74 @@ public sealed class GameEngine
             position.Angle);
     }
 
-    private static double Distance(double x, double y)
+    private static double Distance(double x, double y) => Math.Sqrt(x * x + y * y);
+
+    private enum TrackDirection
     {
-        return Math.Sqrt(x * x + y * y);
+        North,
+        East,
+        South,
+        West
     }
 
-    private static (double[] Lengths, double[] Starts, double Total) MeasureLoop()
+    private static class TrackDirections
     {
-        var lengths = new double[MainLoop.Length];
-        var starts = new double[MainLoop.Length];
+        public static readonly TrackDirection[] All =
+        [
+            TrackDirection.North,
+            TrackDirection.East,
+            TrackDirection.South,
+            TrackDirection.West
+        ];
+
+        public static TrackDirection Opposite(TrackDirection direction)
+        {
+            return direction switch
+            {
+                TrackDirection.North => TrackDirection.South,
+                TrackDirection.East => TrackDirection.West,
+                TrackDirection.South => TrackDirection.North,
+                _ => TrackDirection.East
+            };
+        }
+    }
+
+    private readonly record struct GridCell(int X, int Y)
+    {
+        public GridCell Offset(TrackDirection direction)
+        {
+            return direction switch
+            {
+                TrackDirection.North => this with { Y = Y - (int)GridSize },
+                TrackDirection.East => this with { X = X + (int)GridSize },
+                TrackDirection.South => this with { Y = Y + (int)GridSize },
+                _ => this with { X = X - (int)GridSize }
+            };
+        }
+    }
+
+    private static RouteMetrics MeasureRoute(IReadOnlyList<TrackPoint> points)
+    {
+        var lengths = new double[points.Count - 1];
+        var starts = new double[points.Count - 1];
         var total = 0d;
-        for (var index = 0; index < MainLoop.Length; index++)
+        for (var index = 0; index < points.Count - 1; index++)
         {
             starts[index] = total;
-            var start = MainLoop[index];
-            var end = MainLoop[(index + 1) % MainLoop.Length];
-            var dx = end.X - start.X;
-            var dy = end.Y - start.Y;
+            var dx = points[index + 1].X - points[index].X;
+            var dy = points[index + 1].Y - points[index].Y;
             lengths[index] = Math.Sqrt(dx * dx + dy * dy);
             total += lengths[index];
         }
 
-        return (lengths, starts, total);
+        return new(lengths, starts, total);
     }
 
-    private enum ObstacleType
-    {
-        Signal,
-        Switch
-    }
-
-    private readonly record struct Obstacle(double Distance, ObstacleType Type, string Id);
+    private readonly record struct RouteMetrics(double[] Lengths, double[] Starts, double Total);
+    private readonly record struct RouteProjection(
+        double Distance,
+        double DistanceSquared,
+        TrackPosition Position,
+        double Side);
+    private readonly record struct Obstacle(double Distance, string Id);
 }

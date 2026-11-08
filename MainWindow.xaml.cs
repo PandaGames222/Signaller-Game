@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Media;
 using System.Security;
 using System.Text.Json;
 using System.Windows;
@@ -27,14 +28,17 @@ public partial class MainWindow : Window
     private bool _saveFailed;
     private bool _updateRequestInProgress;
     private AppRelease? _availableUpdate;
+    private TrainService? _selectedTrain;
+    private Signal? _selectedSignal;
 
     public MainWindow(GameEngine engine)
     {
         InitializeComponent();
         _engine = engine;
         Railway.Engine = _engine;
+        _engine.TrainEnteredZone += Engine_TrainEnteredZone;
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.3.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
 
         _timer = new DispatcherTimer(DispatcherPriority.Render)
@@ -71,12 +75,12 @@ public partial class MainWindow : Window
         _lastTickSeconds = now;
         if (delta <= 0) return;
 
-        var previousDistance = _engine.TrainDistance;
-        var previousStopped = _engine.TrainStopped;
         _engine.Advance(delta);
-        if (previousDistance != _engine.TrainDistance || previousStopped != _engine.TrainStopped)
+        if (!_engine.IsPaused && _engine.Mode == GameMode.Signaller)
             Railway.InvalidateVisual();
         RefreshHud();
+        RefreshTrainDetails();
+        RefreshSignalDetails();
 
         if (now - _lastSaveSeconds >= 30)
         {
@@ -90,11 +94,14 @@ public partial class MainWindow : Window
     {
         BalanceText.Text = _engine.FormattedBalance;
         IncomeText.Text = $"${_engine.IncomePerMinute:N0} / min";
-        TrainStatusText.Text = _engine.TrainStopped ? "01  HELD" : "01  IN SERVICE";
+        RouteCountText.Text = $"GREYFIELD CONTROL AREA  ·  {_engine.RouteCount} ROUTES";
+        var heldTrains = _engine.Trains.Count(train => train.Stopped);
+        TrainStatusText.Text = $"{_engine.TrainCount:00}  ACTIVE";
+        if (heldTrains > 0) TrainStatusText.Text += $" · {heldTrains} HELD";
         TrainStatusText.ToolTip = _engine.TrainStatus;
         ClockText.Text = _engine.FormattedGameClock;
-        TrainAlertText.Text = _engine.TrainStatus;
-        TrainAlertText.Visibility = _engine.TrainStopped ? Visibility.Visible : Visibility.Collapsed;
+        TrainAlertText.Text = heldTrains == 0 ? string.Empty : $"{heldTrains} TRAIN(S) HELD";
+        TrainAlertText.Visibility = heldTrains > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ApplyMode()
@@ -108,8 +115,8 @@ public partial class MainWindow : Window
         ModeTitle.Text = editor ? "Network editor" : "Signaller desk";
         MapSubtitle.Text = editor ? "GRID BUILD MODE" : "SIGNALLING DIAGRAM";
         CanvasHint.Text = editor
-            ? "SELECT AN ITEM TO BUILD  ·  PLACE ON THE GRID  ·  DEMOLISH FOR A 50% REFUND"
-            : "CLICK A SIGNAL TO CHANGE ITS ASPECT  ·  SET POINTS FOR THE MAIN LINE";
+            ? "CONNECT TRACK FROM DEPOT TO STATION  ·  R TO ROTATE  ·  DEMOLISH FOR A 50% REFUND"
+            : "CLICK A TRAIN FOR SERVICE DETAILS  ·  SELECT A SIGNAL TO SET ITS ASPECT";
         DemolishButton.Background = _engine.DemolishMode
             ? new SolidColorBrush(Color.FromRgb(54, 35, 38))
             : new SolidColorBrush(Color.FromRgb(25, 35, 45));
@@ -200,6 +207,9 @@ public partial class MainWindow : Window
     {
         if (sender is not Button { Tag: BuildItemKind kind }) return;
         _engine.SelectBuildItem(kind);
+        RotateButton.Visibility = kind is BuildItemKind.StraightTrack or BuildItemKind.CurvedTrack
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         ApplyMode();
         DisplayLatestNotification($"Selected {GameEngine.BuildItems.Single(item => item.Kind == kind).Name}.");
     }
@@ -261,25 +271,23 @@ public partial class MainWindow : Window
         });
         if (signal is not null)
         {
-            _engine.ToggleSignal(signal.Id);
-            SaveGame();
-            DisplayLatestNotification();
-            Railway.InvalidateVisual();
+            OpenSignalDetails(signal);
             return;
         }
 
-        var points = _engine.Switches.FirstOrDefault(points =>
+        var train = _engine.Trains
+            .Select(candidate => (Train: candidate, Position: _engine.PositionAt(candidate.RouteId, candidate.Distance)))
+            .Where(item => DistanceSquared(item.Position.X, item.Position.Y, point.X, point.Y) < 30 * 30)
+            .OrderBy(item => DistanceSquared(item.Position.X, item.Position.Y, point.X, point.Y))
+            .Select(item => item.Train)
+            .FirstOrDefault();
+        if (train is not null)
         {
-            var marker = _engine.SwitchPosition(points);
-            return DistanceSquared(marker.X, marker.Y, point.X, point.Y) < 30 * 30;
-        });
-        if (points is not null)
-        {
-            _engine.ToggleSwitch(points.Id);
-            SaveGame();
-            DisplayLatestNotification();
-            Railway.InvalidateVisual();
+            OpenTrainDetails(train);
+            return;
         }
+
+        CloseDetails();
     }
 
     private void Railway_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
@@ -295,6 +303,126 @@ public partial class MainWindow : Window
     {
         _engine.ClearPreview();
         Railway.InvalidateVisual();
+    }
+
+    private void RotateButton_Click(object sender, RoutedEventArgs e)
+    {
+        _engine.RotateSelectedItem();
+        DisplayLatestNotification($"Track piece rotated to {_engine.SelectedRotation}°.");
+        Railway.InvalidateVisual();
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (SignalControlPanel.Visibility == Visibility.Visible && _selectedSignal is not null)
+        {
+            var aspect = e.Key switch
+            {
+                System.Windows.Input.Key.D1 or System.Windows.Input.Key.NumPad1 => SignalAspect.Green,
+                System.Windows.Input.Key.D2 or System.Windows.Input.Key.NumPad2 => SignalAspect.Yellow,
+                System.Windows.Input.Key.D3 or System.Windows.Input.Key.NumPad3 => SignalAspect.Red,
+                _ => (SignalAspect?)null
+            };
+            if (aspect is not null)
+            {
+                ApplySignalAspect(aspect.Value);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (_engine.Mode == GameMode.Editor && e.Key == System.Windows.Input.Key.R
+            && _engine.SelectedBuildItem is BuildItemKind.StraightTrack or BuildItemKind.CurvedTrack)
+        {
+            _engine.RotateSelectedItem();
+            Railway.InvalidateVisual();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            CloseDetails();
+        }
+    }
+
+    private void SignalAspectButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string value }
+            || !Enum.TryParse<SignalAspect>(value, out var aspect))
+            return;
+        ApplySignalAspect(aspect);
+    }
+
+    private void ApplySignalAspect(SignalAspect aspect)
+    {
+        if (_selectedSignal is null || !_engine.SetSignalAspect(_selectedSignal.Id, aspect)) return;
+        SaveGame();
+        RefreshSignalDetails();
+        DisplayLatestNotification();
+        Railway.InvalidateVisual();
+    }
+
+    private void OpenSignalDetails(Signal signal)
+    {
+        _selectedSignal = signal;
+        _selectedTrain = null;
+        TrainInfoPanel.Visibility = Visibility.Collapsed;
+        SignalControlPanel.Visibility = Visibility.Visible;
+        RefreshSignalDetails();
+    }
+
+    private void RefreshSignalDetails()
+    {
+        if (_selectedSignal is null) return;
+        SignalInfoId.Text = _selectedSignal.Id;
+        SignalInfoAspect.Text = $"CURRENT ASPECT · {_selectedSignal.Aspect.ToString().ToUpperInvariant()}";
+    }
+
+    private void OpenTrainDetails(TrainService train)
+    {
+        _selectedTrain = train;
+        _selectedSignal = null;
+        SignalControlPanel.Visibility = Visibility.Collapsed;
+        TrainInfoPanel.Visibility = Visibility.Visible;
+        RefreshTrainDetails();
+    }
+
+    private void RefreshTrainDetails()
+    {
+        if (_selectedTrain is null) return;
+        var train = _engine.Trains.FirstOrDefault(candidate => candidate.Id == _selectedTrain.Id);
+        if (train is null)
+        {
+            CloseDetails();
+            return;
+        }
+
+        var route = _engine.Routes.First(item => item.Id == train.RouteId);
+        var nextStation = _engine.NextStation(train);
+        TrainInfoHeadcode.Text = train.Headcode;
+        TrainInfoService.Text = train.ServiceName;
+        TrainInfoType.Text = train.TrainType;
+        TrainInfoLatency.Text = _engine.LatencyText(train);
+        TrainInfoSpeed.Text = $"{train.Speed * 3.6:0} km/h";
+        TrainInfoNextStation.Text = nextStation is null
+            ? route.ExitName
+            : $"{nextStation.Name} · {nextStation.Platform}";
+        TrainInfoDestination.Text = $"{route.Name} · {route.Destination}";
+        TrainInfoStatus.Text = train.Status;
+    }
+
+    private void CloseDetailsButton_Click(object sender, RoutedEventArgs e) => CloseDetails();
+
+    private void CloseDetails()
+    {
+        _selectedTrain = null;
+        _selectedSignal = null;
+        TrainInfoPanel.Visibility = Visibility.Collapsed;
+        SignalControlPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void Engine_TrainEnteredZone(TrainService train)
+    {
+        SystemSounds.Asterisk.Play();
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
@@ -417,6 +545,7 @@ public partial class MainWindow : Window
         _updateCheckTimer.Stop();
         _updaterCleanupTimer.Stop();
         _updater.Dispose();
+        _engine.TrainEnteredZone -= Engine_TrainEnteredZone;
         _windowLifetime.Dispose();
     }
 
@@ -511,6 +640,8 @@ public sealed class RailwaySurface : FrameworkElement
     private static readonly Pen TrackBedPen = CreateFrozenPen(Color.FromRgb(39, 55, 62), 23);
     private static readonly Pen TiePen = CreateFrozenPen(Color.FromRgb(62, 78, 84), 1);
     private static readonly Pen RailPen = CreateFrozenPen(Color.FromRgb(126, 145, 149), 1.7);
+    private static readonly Pen EditorTrackBedPen = CreateFrozenPen(Color.FromRgb(39, 55, 62), 9);
+    private static readonly Pen EditorTrackTiePen = CreateFrozenPen(Color.FromRgb(87, 105, 111), 1.2);
 
     public GameEngine? Engine { get; set; }
 
@@ -540,14 +671,17 @@ public sealed class RailwaySurface : FrameworkElement
 
         DrawAmbientGrid(drawingContext);
         if (Engine.Mode == GameMode.Editor) DrawGrid(drawingContext);
-        DrawTrack(drawingContext, GameEngine.MainLoop, closed: true);
-        DrawBranch(drawingContext);
-        DrawStation(drawingContext, Engine);
-        DrawNetworkLabels(drawingContext);
-        foreach (var item in Engine.PlacedItems) DrawPlacedItem(drawingContext, item, Engine.Mode);
-        foreach (var points in Engine.Switches) DrawPoints(drawingContext, Engine, points);
+        foreach (var route in Engine.Routes)
+            DrawTrack(drawingContext, route.Points, closed: false);
+        DrawStations(drawingContext, Engine);
+        DrawNetworkLabels(drawingContext, Engine);
+        foreach (var item in Engine.PlacedItems)
+        {
+            if (item.Kind == BuildItemKind.Signal && Engine.IsOperationalSignalItem(item)) continue;
+            DrawPlacedItem(drawingContext, item, Engine.Mode);
+        }
         foreach (var signal in Engine.Signals) DrawSignal(drawingContext, Engine, signal);
-        DrawTrain(drawingContext, Engine);
+        foreach (var train in Engine.Trains) DrawTrain(drawingContext, Engine, train);
         if (Engine.Mode == GameMode.Editor && double.IsFinite(Engine.PreviewX))
         {
             var previewPen = new Pen(new SolidColorBrush(Color.FromRgb(115, 224, 176)), 1)
@@ -631,44 +765,47 @@ public sealed class RailwaySurface : FrameworkElement
         }
     }
 
-    private static void DrawBranch(DrawingContext drawingContext)
+    private static void DrawStations(DrawingContext drawingContext, GameEngine engine)
     {
-        TrackPoint[] siding =
-        [
-            new(700, 120),
-            new(755, 193),
-            new(700, 260)
-        ];
-        DrawTrack(drawingContext, siding, closed: false);
-        var sidingLabel = CreateText("SIDING", 8, Color.FromRgb(156, 174, 176), FontWeights.Medium);
-        drawingContext.DrawRoundedRectangle(
-            new SolidColorBrush(Color.FromRgb(23, 35, 42)),
-            new Pen(new SolidColorBrush(Color.FromRgb(61, 81, 90)), 1),
-            new Rect(668, 249, 66, 26), 5, 5);
-        drawingContext.DrawText(sidingLabel, new WpfPoint(681, 257));
+        var stationPen = CreateFrozenPen(Color.FromRgb(80, 99, 108), 1);
+        var markerPen = CreateFrozenPen(Color.FromRgb(115, 224, 176), 1.4);
+        foreach (var route in engine.Routes)
+        foreach (var station in engine.StationsForRoute(route.Id))
+        {
+            var position = engine.PositionAt(route.Id, station.Distance);
+            var marker = new WpfPoint(position.X, position.Y);
+            drawingContext.DrawLine(markerPen,
+                new WpfPoint(position.X - 11, position.Y), new WpfPoint(position.X + 11, position.Y));
+            drawingContext.DrawRoundedRectangle(
+                new SolidColorBrush(Color.FromRgb(28, 41, 49)),
+                stationPen,
+                new Rect(position.X + 15, position.Y - 19, 122, 34), 6, 6);
+            drawingContext.DrawText(CreateText(station.Name.ToUpperInvariant(), 8,
+                    Color.FromRgb(209, 225, 220), FontWeights.SemiBold),
+                new WpfPoint(position.X + 23, position.Y - 14));
+            drawingContext.DrawText(CreateText(station.Platform.ToUpperInvariant(), 7,
+                    Color.FromRgb(129, 146, 143), FontWeights.Normal),
+                new WpfPoint(position.X + 23, position.Y + 1));
+            drawingContext.DrawEllipse(
+                new SolidColorBrush(Color.FromRgb(115, 224, 176)), null, marker, 2.5, 2.5);
+        }
     }
 
-    private static void DrawStation(DrawingContext drawingContext, GameEngine engine)
+    private static void DrawNetworkLabels(DrawingContext drawingContext, GameEngine engine)
     {
-        var position = engine.PositionAt(1319);
-        drawingContext.DrawRoundedRectangle(
-            new SolidColorBrush(Color.FromRgb(28, 41, 49)),
-            new Pen(new SolidColorBrush(Color.FromRgb(80, 99, 108)), 1),
-            new Rect(295, 402, 116, 35), 7, 7);
-        drawingContext.DrawText(CreateText("GREYFIELD", 10, Color.FromRgb(209, 225, 220), FontWeights.SemiBold),
-            new WpfPoint(310, 406));
-        drawingContext.DrawText(CreateText("STATION", 8, Color.FromRgb(129, 146, 143), FontWeights.Normal),
-            new WpfPoint(310, 420));
-        var marker = new Pen(new SolidColorBrush(Color.FromRgb(115, 224, 176)), 1);
-        drawingContext.DrawLine(marker, new WpfPoint(position.X - 15, position.Y),
-            new WpfPoint(position.X + 15, position.Y));
-    }
-
-    private static void DrawNetworkLabels(DrawingContext drawingContext)
-    {
-        DrawTextCentered(drawingContext, "NORTH LOOP", 420, 65, 9, Color.FromRgb(101, 118, 129));
-        DrawTextCentered(drawingContext, "EAST JUNCTION", 867, 284, 9, Color.FromRgb(101, 118, 129));
-        DrawTextCentered(drawingContext, "WEST APPROACH", 91, 287, 9, Color.FromRgb(101, 118, 129));
+        var entry = engine.Routes[0].Points[0];
+        DrawTextCentered(drawingContext, "WEST DEPOT · ENTRY", entry.X + 78, entry.Y + 32, 8,
+            Color.FromRgb(151, 174, 171));
+        foreach (var route in engine.Routes)
+        {
+            var exit = route.Points[^1];
+            DrawTextCentered(drawingContext, route.ExitName, exit.X - 32, exit.Y - 38, 8,
+                Color.FromRgb(245, 187, 97));
+            DrawTextCentered(drawingContext, route.Name, exit.X - 70, exit.Y + 23, 7,
+                Color.FromRgb(101, 118, 129));
+        }
+        DrawTextCentered(drawingContext, "AUTOMATIC JUNCTION", 820, 593, 8,
+            Color.FromRgb(101, 118, 129));
     }
 
     private static void DrawSignal(DrawingContext drawingContext, GameEngine engine, Signal signal)
@@ -694,33 +831,17 @@ public sealed class RailwaySurface : FrameworkElement
             point.X, point.Y + 32, 7, color);
     }
 
-    private static void DrawPoints(DrawingContext drawingContext, GameEngine engine, Points points)
+    private static void DrawTrain(DrawingContext drawingContext, GameEngine engine, TrainService train)
     {
-        var position = engine.SwitchPosition(points);
-        var color = points.Direction == PointDirection.Straight
-            ? Color.FromRgb(115, 224, 176)
-            : Color.FromRgb(245, 187, 97);
-        var pen = new Pen(new SolidColorBrush(color), 2)
+        var position = engine.PositionAt(train.RouteId, train.Distance);
+        var trainColor = train.RouteId switch
         {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round
+            "north" => Color.FromRgb(112, 184, 232),
+            "south" => Color.FromRgb(175, 147, 224),
+            _ => Color.FromRgb(232, 169, 78)
         };
-        drawingContext.DrawLine(pen, new WpfPoint(position.X - 11, position.Y - 7),
-            new WpfPoint(position.X + 11, position.Y + 7));
-        drawingContext.DrawLine(pen, new WpfPoint(position.X - 11, position.Y + 7),
-            new WpfPoint(position.X + 11, position.Y - 7));
-        drawingContext.DrawEllipse(new SolidColorBrush(color), null,
-            new WpfPoint(position.X, position.Y), 3.5, 3.5);
-        DrawTextCentered(drawingContext,
-            $"{points.Id} · {points.Direction.ToString().ToUpperInvariant()}",
-            position.X, position.Y - 22, 8, Color.FromRgb(169, 181, 189));
-    }
-
-    private static void DrawTrain(DrawingContext drawingContext, GameEngine engine)
-    {
-        var position = engine.PositionAt(engine.TrainDistance);
         drawingContext.PushTransform(new RotateTransform(position.Angle * 180 / Math.PI, position.X, position.Y));
-        drawingContext.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(232, 169, 78)),
+        drawingContext.DrawRoundedRectangle(new SolidColorBrush(trainColor),
             null, new Rect(position.X - 20, position.Y - 8, 40, 16), 5, 5);
         drawingContext.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(38, 51, 59)),
             null, new Rect(position.X - 12, position.Y - 5, 20, 10), 2, 2);
@@ -728,15 +849,18 @@ public sealed class RailwaySurface : FrameworkElement
             null, new Rect(position.X + 14, position.Y - 3, 3, 6));
         drawingContext.Pop();
         drawingContext.DrawEllipse(
-            new SolidColorBrush(engine.TrainStopped
+            new SolidColorBrush(train.Stopped
                 ? Color.FromRgb(242, 107, 114)
-                : Color.FromRgb(232, 169, 78)),
+                : trainColor),
             null,
             new WpfPoint(position.X, position.Y - 19), 3, 3);
+        DrawTextCentered(drawingContext, train.Headcode, position.X, position.Y + 12, 7,
+            Color.FromRgb(215, 225, 228));
     }
 
     private static void DrawPlacedItem(DrawingContext drawingContext, PlacedItem item, GameMode mode)
     {
+        drawingContext.PushTransform(new RotateTransform(item.Rotation, item.X, item.Y));
         var color = item.Kind switch
         {
             BuildItemKind.Signal => Color.FromRgb(242, 107, 114),
@@ -753,9 +877,18 @@ public sealed class RailwaySurface : FrameworkElement
         switch (item.Kind)
         {
             case BuildItemKind.StraightTrack:
-                for (var offset = -5; offset <= 5; offset += 5)
-                    drawingContext.DrawLine(pen, new WpfPoint(item.X - 17, item.Y + offset),
-                        new WpfPoint(item.X + 17, item.Y + offset));
+                drawingContext.DrawLine(
+                    EditorTrackBedPen,
+                    new WpfPoint(item.X - 20, item.Y),
+                    new WpfPoint(item.X + 20, item.Y));
+                for (var tie = -16; tie <= 16; tie += 8)
+                    drawingContext.DrawLine(
+                        EditorTrackTiePen,
+                        new WpfPoint(item.X + tie, item.Y - 8),
+                        new WpfPoint(item.X + tie, item.Y + 8));
+                foreach (var railOffset in new[] { -5d, 5d })
+                    drawingContext.DrawLine(pen, new WpfPoint(item.X - 20, item.Y + railOffset),
+                        new WpfPoint(item.X + 20, item.Y + railOffset));
                 break;
             case BuildItemKind.CurvedTrack:
                 drawingContext.DrawGeometry(null, pen, CurvedTrack(item.X, item.Y, 20));
@@ -790,6 +923,7 @@ public sealed class RailwaySurface : FrameworkElement
             };
             drawingContext.DrawEllipse(null, hitboxPen, new WpfPoint(item.X, item.Y), 22, 22);
         }
+        drawingContext.Pop();
     }
 
     private static StreamGeometry CurvedTrack(double x, double y, double radius)

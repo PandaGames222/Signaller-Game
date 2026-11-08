@@ -5,12 +5,15 @@ var tests = new (string Name, Action Run)[]
     ("signal aspects cycle in the expected order", SignalAspectsCycle),
     ("train stops safely at a red signal and resumes on green", TrainStopsAtSignalAndResumes),
     ("train remains stopped at a red signal until it is cleared", RedSignalKeepsTrainStopped),
-    ("misaligned points stop the assigned route", MisalignedPointsStopTrain),
+    ("automatic routing serves all three terminal branches", AutomaticRoutingServesThreeTerminals),
+    ("trains enter the zone and trigger an arrival notification", TrainEntryIsReported),
     ("only safe signal and destination crossings pay", SafePassagesEarnMoney),
     ("loop distance and wrapped crossings are correct", TrackDistancesWrapCorrectly),
     ("editor charges builds and refunds half on demolition", EditorBuildsAndRefunds),
     ("editor refuses occupied and track-overlapping placements", EditorRejectsOccupiedPlacements),
+    ("connected depot-to-station track activates an operating route", EditorTracksBecomeOperational),
     ("game save restores operation and editor state", GameSaveRestoresState),
+    ("version one saves migrate without manual switch controls", LegacySavesMigrate),
     ("invalid and overlapping saved items are rejected", InvalidSavesAreRejected),
     ("large balances cannot overflow during train payments", LargeBalancesDoNotOverflow),
     ("update requests validate the release, checksum, and install path", UpdateRequestsAreValidated)
@@ -43,38 +46,36 @@ return 0;
 static void SignalAspectsCycle()
 {
     var engine = new GameEngine();
-    Check(engine.ToggleSignal("S1"), "S1 should exist.");
+    Check(engine.SetSignalAspect("S01", SignalAspect.Red), "S01 should exist.");
     Equal(SignalAspect.Red, engine.Signals[0].Aspect);
-    engine.ToggleSignal("S1");
+    engine.ToggleSignal("S01");
     Equal(SignalAspect.Yellow, engine.Signals[0].Aspect);
-    engine.ToggleSignal("S1");
+    engine.ToggleSignal("S01");
+    Check(!engine.SetSignalAspect("missing", SignalAspect.Green), "An unknown signal should not be changed.");
+    engine.SetSignalAspect("S01", SignalAspect.Green);
     Equal(SignalAspect.Green, engine.Signals[0].Aspect);
     Check(!engine.ToggleSignal("missing"), "An unknown signal should not be changed.");
 }
 
 static void TrainStopsAtSignalAndResumes()
 {
-    var engine = new GameEngine();
-    engine.ToggleSignal("S1");
+    var engine = CreateSingleTrainEngine();
+    engine.SetSignalAspect("S01", SignalAspect.Red);
     RunUntilStopped(engine, 20);
     Check(engine.TrainStopped, "A red signal must stop the train.");
     Check(engine.TrainDistance < engine.Signals[0].Distance,
         "The train must not pass a red signal.");
-    Equal("Held at signal S1", engine.TrainStatus);
-    Equal(GameEngine.StartingBalance, engine.Balance);
+    Equal("Held at signal S01", engine.TrainStatus);
 
-    engine.ToggleSignal("S1");
-    engine.ToggleSignal("S1");
+    engine.SetSignalAspect("S01", SignalAspect.Green);
     engine.Advance(0.1);
     Check(!engine.TrainStopped, "A green signal should release the train.");
-    engine.Advance(0.6);
-    Equal(GameEngine.StartingBalance + (int)GameEngine.SectionPayment, engine.Balance);
 }
 
 static void RedSignalKeepsTrainStopped()
 {
-    var engine = new GameEngine();
-    engine.ToggleSignal("S1");
+    var engine = CreateSingleTrainEngine();
+    engine.SetSignalAspect("S01", SignalAspect.Red);
     RunUntilStopped(engine, 20);
     var stoppedAt = engine.TrainDistance;
 
@@ -83,38 +84,81 @@ static void RedSignalKeepsTrainStopped()
     Near(stoppedAt, engine.TrainDistance);
     Equal(GameEngine.StartingBalance, engine.Balance);
 
-    engine.ToggleSignal("S1");
-    engine.ToggleSignal("S1");
+    engine.SetSignalAspect("S01", SignalAspect.Green);
     engine.Advance(0.25);
     Check(!engine.TrainStopped, "A green signal should release the train.");
 }
 
-static void MisalignedPointsStopTrain()
+static void AutomaticRoutingServesThreeTerminals()
 {
     var engine = new GameEngine();
-    engine.ToggleSwitch("P1");
-    RunUntilStopped(engine, 20);
-    Check(engine.TrainStopped, "Points set for a different route must stop the train.");
-    Check(engine.TrainDistance < engine.Switches[0].Distance,
-        "The train must stop before reaching the misaligned points.");
+    Equal(3, engine.Routes.Count);
+    Equal(10, engine.Signals.Count);
+    Equal(GameEngine.MaximumTrains, engine.TrainCount);
+    Check(!GameEngine.BuildItems.Any(item => item.Kind == BuildItemKind.Switch),
+        "Manual switch controls must not be offered.");
+    Check(engine.Trains.Select(train => train.RouteId).Distinct().Count() > 1,
+        "The opening timetable should use automatic routes.");
+    Check(engine.Routes.All(route => route.Points.Count >= 3 && route.ExitName.Contains("EXIT")),
+        "Each branch should have a defined terminal.");
 
-    engine.ToggleSwitch("P1");
-    engine.Advance(0.1);
-    Check(!engine.TrainStopped, "Restoring the assigned direction must resume the train.");
+    for (var index = 0; index < 60 * 25; index++)
+        engine.Advance(1d / 60);
+    for (var first = 0; first < engine.Trains.Count; first++)
+    for (var second = first + 1; second < engine.Trains.Count; second++)
+    {
+        var a = engine.Trains[first];
+        var b = engine.Trains[second];
+        if (a.RouteId != b.RouteId && (a.Distance >= 950 || b.Distance >= 950)) continue;
+        var gap = Math.Abs(a.Distance - b.Distance);
+        Check(gap >= GameEngine.SafetyDistance - 0.1,
+            "The automatic interlocking must preserve safe train separation.");
+    }
+}
+
+static void TrainEntryIsReported()
+{
+    var engine = new GameEngine();
+    var entered = 0;
+    engine.TrainEnteredZone += _ => entered++;
+
+    for (var index = 0; index < 60 * 60 * 60 && entered == 0; index++)
+        engine.Advance(1d / 60);
+
+    Equal(1, entered);
 }
 
 static void SafePassagesEarnMoney()
 {
     var redSignal = new GameEngine();
-    redSignal.ToggleSignal("S1");
+    var isolatedTrain = redSignal.Save().Train with
+    {
+        Distance = 0,
+        RouteId = "main",
+        Id = "TR99",
+        Stopped = false,
+        Status = "In service"
+    };
+    var isolatedSave = redSignal.Save() with
+    {
+        Train = isolatedTrain,
+        Trains = [isolatedTrain]
+    };
+    redSignal = new GameEngine(isolatedSave);
+    redSignal.SetSignalAspect("S01", SignalAspect.Red);
     RunUntilStopped(redSignal, 20);
     Equal(GameEngine.StartingBalance, redSignal.Balance);
+    redSignal.SetSignalAspect("S01", SignalAspect.Green);
+    RunUntilBalance(redSignal, GameEngine.StartingBalance + 25, 5);
+    Equal(GameEngine.StartingBalance + 25, redSignal.Balance);
 
     var running = new GameEngine();
     running.Advance(0.1);
-    Equal(GameEngine.StartingBalance, running.Balance);
+    Check(running.Balance >= GameEngine.StartingBalance,
+        "The opening timetable should begin earning safely.");
     RunUntilBalance(running, GameEngine.StartingBalance + 25, 20);
-    Equal(GameEngine.StartingBalance + 25, running.Balance);
+    Check(running.Balance >= GameEngine.StartingBalance + 25,
+        "Safe signal crossings should generate income.");
     RunUntilBalance(running, GameEngine.StartingBalance + 150, 25);
     Equal(GameEngine.StartingBalance + 150, running.Balance);
     Check(running.IncomePerMinute > 0, "Recent earnings should appear in the income HUD.");
@@ -161,14 +205,73 @@ static void EditorRejectsOccupiedPlacements()
 {
     var engine = new GameEngine();
     engine.SetMode(GameMode.Editor);
-    Check(!engine.PlaceSelectedItem(300, 120),
-        "An editor piece must not overlap the existing loop.");
+    Check(!engine.PlaceSelectedItem(200, 550),
+        "An editor piece must not overlap the existing railway.");
     Check(engine.PlaceSelectedItem(40, 40), "A clear tile should accept the first build.");
     Check(!engine.PlaceSelectedItem(40, 40),
         "A second piece must not overwrite the existing piece.");
     Equal(GameEngine.StartingBalance - 100, engine.Balance);
     engine.SetMode(GameMode.Signaller);
     Check(!engine.PlaceSelectedItem(80, 80), "Buildings must not be placeable in signalling mode.");
+
+    engine.SetMode(GameMode.Editor);
+    engine.SelectBuildItem(BuildItemKind.Depot);
+    Check(engine.PlaceSelectedItem(1740, 1020), "Editor placement should work in the expanded map's lower-right area.");
+    Equal(1760d, engine.PlacedItems[^1].X);
+    Equal(1040d, engine.PlacedItems[^1].Y);
+}
+
+static void EditorTracksBecomeOperational()
+{
+    var engine = new GameEngine();
+    engine.SetMode(GameMode.Editor);
+    engine.SelectBuildItem(BuildItemKind.Depot);
+    Check(engine.PlaceSelectedItem(40, 40), "The custom route should start at its depot.");
+    engine.SelectBuildItem(BuildItemKind.Station);
+    Check(engine.PlaceSelectedItem(400, 40), "The custom route should have a terminal station.");
+    engine.SelectBuildItem(BuildItemKind.StraightTrack);
+    foreach (var x in Enumerable.Range(2, 8).Select(index => index * 40d))
+        Check(engine.PlaceSelectedItem(x, 40), $"Track at {x} should connect to its neighbor.");
+    engine.SelectBuildItem(BuildItemKind.Signal);
+    Check(engine.PlaceSelectedItem(240, 80), "A signal beside the track should be built.");
+
+    var customRoute = engine.Routes.Single(route => route.Id.StartsWith("editor-", StringComparison.Ordinal));
+    Equal(4, engine.RouteCount);
+    Equal("Depot 40,40", customRoute.EntranceName);
+    var editorSignal = engine.Signals.Single(signal => signal.Id == "E0240-0080");
+    Equal(customRoute.Id, editorSignal.RouteId);
+    var savedTrain = engine.Save().Train with
+    {
+        Id = "TR99",
+        RouteId = customRoute.Id,
+        Distance = 0,
+        Status = "In service"
+    };
+    var restored = new GameEngine(engine.Save() with { Train = savedTrain, Trains = [savedTrain] });
+    Check(restored.Trains[0].RouteId == customRoute.Id,
+        $"The custom train route should survive save restoration (saved {customRoute.Id}, restored {restored.Trains[0].RouteId}).");
+    Equal("User-built station", restored.NextStation(restored.Trains[0])!.Name);
+    var restoredSignal = restored.Signals.Single(signal => signal.Id == "E0240-0080");
+    Check(restored.SetSignalAspect(restoredSignal.Id, SignalAspect.Red),
+        "A built signal should be controllable.");
+    restored.SetMode(GameMode.Signaller);
+    for (var index = 0; index < 60 * 15; index++)
+        restored.Advance(1d / 60);
+    var stoppedTrain = restored.Trains.Single(train => train.Id == savedTrain.Id);
+    Check(stoppedTrain.Stopped,
+        $"The train must obey an editor-built red signal (distance {stoppedTrain.Distance:0.0}, signal {restoredSignal.Distance:0.0}, status {stoppedTrain.Status}).");
+
+    for (var index = 0; index < 60 * 15; index++)
+        restored.Advance(1d / 60);
+    Check(restored.Trains.Any(train => train.RouteId == customRoute.Id),
+        "The timetable should automatically dispatch trains over the constructed route.");
+
+    restored.SetMode(GameMode.Editor);
+    restored.ToggleDemolishMode();
+    Check(restored.DemolishNearest(80, 40), "A route tile should be removable in demolish mode.");
+    Equal(3, restored.RouteCount);
+    Check(!restored.Trains.Any(train => train.RouteId == customRoute.Id),
+        "Trains should be withdrawn safely if their constructed route is disconnected.");
 }
 
 static void GameSaveRestoresState()
@@ -176,14 +279,40 @@ static void GameSaveRestoresState()
     var engine = new GameEngine();
     engine.SetMode(GameMode.Editor);
     engine.PlaceSelectedItem(40, 40);
+    engine.RotateSelectedItem();
+    engine.SelectBuildItem(BuildItemKind.StraightTrack);
+    engine.PlaceSelectedItem(80, 40);
     engine.ToggleDemolishMode();
     var saved = engine.Save();
     var restored = new GameEngine(saved);
 
-    Equal(GameEngine.StartingBalance - 100, restored.Balance);
-    Equal(1, restored.PlacedItems.Count);
+    Equal(GameEngine.StartingBalance - 200, restored.Balance);
+    Equal(GameEngine.MaximumTrains, restored.TrainCount);
+    Equal(2, restored.PlacedItems.Count);
     Equal(40d, restored.PlacedItems[0].X);
+    Equal(90, restored.PlacedItems[1].Rotation);
     Equal(GameMode.Editor, restored.Mode);
+}
+
+static void LegacySavesMigrate()
+{
+    var engine = new GameEngine();
+    var legacyTrain = new TrainSaveData(300, false, "In service");
+    var legacySave = engine.Save() with
+    {
+        Version = 1,
+        Signals = [new("S1", SignalAspect.Red), new("S2", SignalAspect.Yellow)],
+        Points = [new("P1", PointDirection.Diverging)],
+        Train = legacyTrain,
+        Trains = null,
+        PlacedItems = []
+    };
+    var restored = new GameEngine(legacySave);
+
+    Equal(1, restored.TrainCount);
+    Equal("2K14", restored.Trains[0].Headcode);
+    Equal(SignalAspect.Red, restored.Signals.Single(signal => signal.Id == "S02").Aspect);
+    Equal(SignalAspect.Yellow, restored.Signals.Single(signal => signal.Id == "S05").Aspect);
 }
 
 static void InvalidSavesAreRejected()
@@ -260,6 +389,20 @@ static void RunUntilStopped(GameEngine engine, double seconds)
 {
     for (var i = 0; i < seconds * 60 && !engine.TrainStopped; i++)
         engine.Advance(1d / 60);
+}
+
+static GameEngine CreateSingleTrainEngine()
+{
+    var source = new GameEngine();
+    var train = source.Save().Train with
+    {
+        Distance = 0,
+        Id = "TR99",
+        RouteId = "main",
+        Stopped = false,
+        Status = "In service"
+    };
+    return new GameEngine(source.Save() with { Train = train, Trains = [train] });
 }
 
 static void RunUntilBalance(GameEngine engine, int expected, double seconds)

@@ -21,10 +21,10 @@ Publish a self-contained, single-file Windows build and package it with [Inno Se
 dotnet publish Signaller.csproj -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
   -o dist\publish
-ISCC.exe /DAppVersion=1.2.0 /DPublishDir="..\dist\publish" /DOutputDir="..\dist" installer\Signaller.iss
+ISCC.exe /DAppVersion=1.3.0 /DPublishDir="..\dist\publish" /DOutputDir="..\dist" installer\Signaller.iss
 ```
 
-The installer is written to `dist\Signaller-Setup-1.2.0.exe`. It installs per-user without administrator privileges and uses a stable application ID; installing a newer version upgrades the existing installation and keeps the saved game.
+The installer is written to `dist\Signaller-Setup-1.3.0.exe`. It installs per-user without administrator privileges and uses a stable application ID; installing a newer version upgrades the existing installation and keeps the saved game.
 
 ## Automatic updates and GitHub releases
 
@@ -35,14 +35,14 @@ If you are upgrading from the original 1.0 Electron app, run the latest native i
 To publish a release:
 
 1. Update the `<Version>` in `Signaller.csproj` and commit the change.
-2. Push a matching version tag, such as `v1.2.0`.
+2. Push a matching version tag, such as `v1.3.0`.
 
 The [GitHub Actions workflow](./.github/workflows/release.yml) validates the tag, runs the game-logic regression tests, builds the self-contained Windows application, packages it, and attaches the installer to the GitHub release. Public release downloads let installed copies check and update without an embedded token.
 
 ## Play
 
-- In **Signaller Mode**, click a signal to cycle red → yellow → green and click the points to change their direction. A train stops safely before a red signal or points set against its assigned route.
-- Switch to **Editor Mode**, select a trackside item, and click a clear grid tile to place it. Demolishing a piece refunds 50% of its cost.
-- The train runs the Greyfield Loop and earns payments for safe section and destination crossings. Use the pause button to stop the simulation.
-
-Editor additions are visual prototypes and do not yet alter the operating route.
+- The single Greyfield Control Area map has a West Depot entrance, automatic junction routing, and east, north, and south exits. Ten signals protect the three routes.
+- Five trains run on the timetable. Click a train to inspect its headcode, service, train type, delay, speed, next station/platform, destination, and status. An arrival chime plays when a train enters the control area.
+- Click a signal to open its control panel. Choose a lamp or press **1** for green, **2** for yellow, or **3** for red. Trains obey red signals and maintain safe spacing automatically; points are routed by the timetable.
+- Switch to **Editor Mode** to build grid-based track. Straight and curved tiles connect through matching edges; connect a **Depot** to a **Station** to add an operating route that trains automatically use. Press **R** to rotate track pieces; demolishing a piece refunds 50% of its cost.
+- Trains earn payments for safe signal passages and station calls. Use the pause button to stop the simulation.
