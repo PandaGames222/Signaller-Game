@@ -34,7 +34,33 @@ jobs:
             throw "Release tag $env:RELEASE_TAG does not match package.json version v$packageVersion."
           }
 
-      - name: Build and publish installer and update metadata
-        run: npm run publish:win
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Create GitHub release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release create $env:RELEASE_TAG --verify-tag --title "Signaller v$version" --notes "Windows installer for Signaller v$version."
+
+      - name: Publish installer and updater metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $assets = @(
+            "dist/Signaller-Setup-$version.exe",
+            "dist/Signaller-Setup-$version.exe.blockmap",
+            "dist/latest.yml"
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path $asset)) {
+              throw "Expected release asset was not built: $asset"
+            }
+          }
+          gh release upload $env:RELEASE_TAG @assets --clobber

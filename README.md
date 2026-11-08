@@ -22,16 +22,12 @@ To run the desktop app directly during development, use `npm start`.
 
 The installed app displays its installed version and checks the configured GitHub releases for updates. When a newer version is published, it downloads in the background; select **Restart to update** to install it. The NSIS installer also upgrades the existing installation if you download and run it manually.
 
-To publish a release, increment the version in `package.json`, set a GitHub token with permission to publish releases, and run:
+To publish a release:
 
-```powershell
-$env:GH_TOKEN = "your GitHub release token"
-npm run publish:win
-```
+1. Increment the version in `package.json` and commit/push the change.
+2. Push a matching `v<version>` tag (for example, `v1.0.1`).
 
-Alternatively, push a `v<version>` tag matching `package.json` (for example, `v1.0.1`). The GitHub Actions workflow builds the installer and publishes a release automatically.
-
-The GitHub repository configured for releases is `PandaGames222/Signaller-Game`. It must be public so installed copies can access release metadata without an embedded private token. The first release must be published before installed copies can discover updates. Each release includes the installer and update metadata used by the app's built-in updater.
+The [GitHub Actions workflow](./.github/workflows/release.yml) builds the Windows installer and uploads the installer, blockmap, and updater metadata. The repository `PandaGames222/Signaller-Game` is public so installed copies can access releases without an embedded private token. Each published release is available to download and powers the app's built-in updater.
 
 ## Play
 
