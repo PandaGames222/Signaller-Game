@@ -9,10 +9,29 @@ public partial class App : Application
 {
     private void Application_Startup(object sender, StartupEventArgs e)
     {
-        GameSaveData? save;
+        if (e.Args.Length > 0)
+        {
+            if (!AppUpdateRequest.TryParse(e.Args, out var updateRequest) || updateRequest is null)
+            {
+                MessageBox.Show(
+                    "The update request is invalid. Start Signaller normally and try the update again.",
+                    "Signaller — Update error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                Shutdown(1);
+                return;
+            }
+
+            var updateWindow = new UpdateWindow(updateRequest);
+            MainWindow = updateWindow;
+            updateWindow.Show();
+            return;
+        }
+
+        GameEngine engine;
         try
         {
-            save = GameSaveStore.Load();
+            engine = new GameEngine(GameSaveStore.Load());
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or JsonException or InvalidDataException)
@@ -26,7 +45,7 @@ public partial class App : Application
             return;
         }
 
-        var window = new MainWindow(new GameEngine(save));
+        var window = new MainWindow(engine);
         MainWindow = window;
         window.Show();
     }

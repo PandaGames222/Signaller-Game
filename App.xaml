@@ -4,11 +4,17 @@
              Startup="Application_Startup">
     <Application.Resources>
         <SolidColorBrush x:Key="AppBackground" Color="#0D1218" />
-        <SolidColorBrush x:Key="Surface" Color="#141B23" />
-        <SolidColorBrush x:Key="Border" Color="#293541" />
+        <SolidColorBrush x:Key="Surface" Color="#151F26" />
+        <SolidColorBrush x:Key="Border" Color="#30414A" />
         <SolidColorBrush x:Key="TextPrimary" Color="#E7EDF3" />
         <SolidColorBrush x:Key="TextMuted" Color="#82909D" />
         <SolidColorBrush x:Key="Mint" Color="#73E0B0" />
+        <LinearGradientBrush x:Key="CardBackground" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Color="#18232A" Offset="0" />
+            <GradientStop Color="#131B21" Offset="1" />
+        </LinearGradientBrush>
+        <DropShadowEffect x:Key="CardShadow" BlurRadius="22" ShadowDepth="4"
+                          Opacity="0.22" Color="#000000" />
 
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
@@ -35,6 +41,9 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#50665F" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#73E0B0" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="ButtonBorder" Property="Background" Value="#22332E" />
@@ -75,6 +84,9 @@
                                 <Setter Property="Foreground" Value="{StaticResource Mint}" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
                             </Trigger>
                         </ControlTemplate.Triggers>

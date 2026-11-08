@@ -6,16 +6,18 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <AssemblyName>Signaller</AssemblyName>
     <RootNamespace>Signaller</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Signaller.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <DebugType>none</DebugType>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="GameLogic\Signaller.GameLogic.csproj" />
+    <Resource Include="Assets\Signaller.ico" />
     <Compile Remove="GameLogic\**\*.cs;tests\**\*.cs" />
     <None Remove="tests\**\*" />
   </ItemGroup>

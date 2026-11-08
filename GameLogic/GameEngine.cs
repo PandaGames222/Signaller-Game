@@ -351,7 +351,7 @@ public sealed class GameEngine
         var removed = PlacedItems[index];
         PlacedItems.RemoveAt(index);
         var refund = removed.Cost / 2;
-        Balance = checked(Balance + refund);
+        Balance = (int)Math.Min(int.MaxValue, (long)Balance + refund);
         _notifications.Add($"Piece demolished — ${refund:N0} refunded.");
         return true;
     }
@@ -438,7 +438,7 @@ public sealed class GameEngine
 
             if (sectionPayment > 0)
             {
-                Balance = checked(Balance + (int)sectionPayment);
+                Balance = (int)Math.Min(int.MaxValue, (long)Balance + (int)sectionPayment);
                 _recentEarnings.Enqueue((RealSeconds, sectionPayment));
             }
         }
@@ -471,6 +471,8 @@ public sealed class GameEngine
         TrainStatus = save.Train.Status;
         foreach (var signalState in save.Signals)
         {
+            if (signalState is null)
+                throw new InvalidDataException("The saved game contains an invalid signal.");
             var signal = Signals.FirstOrDefault(item => item.Id == signalState.Id);
             if (signal is null || !Enum.IsDefined(signalState.Aspect))
                 throw new InvalidDataException("The saved game contains an invalid signal.");
@@ -479,6 +481,8 @@ public sealed class GameEngine
 
         foreach (var switchState in save.Points)
         {
+            if (switchState is null)
+                throw new InvalidDataException("The saved game contains invalid points.");
             var points = Switches.FirstOrDefault(item => item.Id == switchState.Id);
             if (points is null || !Enum.IsDefined(switchState.Direction))
                 throw new InvalidDataException("The saved game contains invalid points.");
@@ -489,6 +493,8 @@ public sealed class GameEngine
             throw new InvalidDataException("The saved game contains too many trackside items.");
         foreach (var item in save.PlacedItems)
         {
+            if (item is null)
+                throw new InvalidDataException("The saved game contains an invalid trackside item.");
             var definition = BuildItems
                 .Where(buildItem => buildItem.Kind == item.Kind)
                 .Select(buildItem => (BuildItemDefinition?)buildItem)
@@ -497,6 +503,9 @@ public sealed class GameEngine
                 || !double.IsFinite(item.X) || !double.IsFinite(item.Y)
                 || item.X < 0 || item.X > WorldWidth || item.Y < 0 || item.Y > WorldHeight)
                 throw new InvalidDataException("The saved game contains an invalid trackside item.");
+            if (IsWithinTrackClearance(item.X, item.Y)
+                || PlacedItems.Any(existing => Distance(existing.X - item.X, existing.Y - item.Y) < GridSize * 0.75))
+                throw new InvalidDataException("The saved game contains overlapping trackside items.");
             PlacedItems.Add(item);
         }
 

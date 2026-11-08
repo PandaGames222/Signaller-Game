@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,6 +17,8 @@ public partial class MainWindow : Window
 {
     private readonly GameEngine _engine;
     private readonly DispatcherTimer _timer;
+    private readonly DispatcherTimer _updateCheckTimer;
+    private readonly DispatcherTimer _updaterCleanupTimer;
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
     private readonly GitHubReleaseUpdater _updater = new();
     private readonly CancellationTokenSource _windowLifetime = new();
@@ -31,7 +34,7 @@ public partial class MainWindow : Window
         _engine = engine;
         Railway.Engine = _engine;
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.1.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
 
         _timer = new DispatcherTimer(DispatcherPriority.Render)
@@ -41,11 +44,24 @@ public partial class MainWindow : Window
         _timer.Tick += Timer_Tick;
         _timer.Start();
 
+        _updateCheckTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(5)
+        };
+        _updateCheckTimer.Tick += async (_, _) => await CheckForUpdatesAsync(_windowLifetime.Token);
+        _updateCheckTimer.Start();
+        _updaterCleanupTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _updaterCleanupTimer.Tick += (_, _) => CleanupUpdaterCopies();
+
         RefreshBuildList();
         RefreshHud();
         ApplyMode();
         Closing += MainWindow_Closing;
         Loaded += async (_, _) => await CheckForUpdatesAsync(_windowLifetime.Token);
+        Loaded += (_, _) => _updaterCleanupTimer.Start();
     }
 
     private void Timer_Tick(object? sender, EventArgs e)
@@ -55,8 +71,11 @@ public partial class MainWindow : Window
         _lastTickSeconds = now;
         if (delta <= 0) return;
 
+        var previousDistance = _engine.TrainDistance;
+        var previousStopped = _engine.TrainStopped;
         _engine.Advance(delta);
-        Railway.InvalidateVisual();
+        if (previousDistance != _engine.TrainDistance || previousStopped != _engine.TrainStopped)
+            Railway.InvalidateVisual();
         RefreshHud();
 
         if (now - _lastSaveSeconds >= 30)
@@ -71,7 +90,8 @@ public partial class MainWindow : Window
     {
         BalanceText.Text = _engine.FormattedBalance;
         IncomeText.Text = $"${_engine.IncomePerMinute:N0} / min";
-        TrainStatusText.Text = _engine.TrainStopped ? "01  held at signal" : "01  in service";
+        TrainStatusText.Text = _engine.TrainStopped ? "01  HELD" : "01  IN SERVICE";
+        TrainStatusText.ToolTip = _engine.TrainStatus;
         ClockText.Text = _engine.FormattedGameClock;
         TrainAlertText.Text = _engine.TrainStatus;
         TrainAlertText.Visibility = _engine.TrainStopped ? Visibility.Visible : Visibility.Collapsed;
@@ -279,62 +299,52 @@ public partial class MainWindow : Window
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
+        if (_updateRequestInProgress) return;
         if (_availableUpdate is null)
         {
             await CheckForUpdatesAsync(_windowLifetime.Token);
             return;
         }
 
-        if (_updateRequestInProgress) return;
-        _updateRequestInProgress = true;
-        UpdateButton.IsEnabled = false;
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
-        cancellation.CancelAfter(TimeSpan.FromMinutes(30));
-        var progress = new Progress<int>(percent =>
-        {
-            UpdateButton.Content = $"DOWNLOADING {percent}%";
-        });
-
         try
         {
-            UpdateButton.Content = "STARTING DOWNLOAD…";
-            var installerPath = await _updater.DownloadInstallerAsync(
-                _availableUpdate,
-                progress,
-                cancellation.Token);
-            var answer = MessageBox.Show(
-                $"Signaller {_availableUpdate.Version} is ready to install. Close the game and start the installer?",
-                "Install Signaller update",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Information);
+            var executable = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(executable) || !File.Exists(executable))
+                throw new FileNotFoundException("The Signaller application could not be located.", executable);
 
-            if (answer == MessageBoxResult.Yes)
+            var updaterDirectory = Path.Combine(Path.GetTempPath(), "Signaller", "updater");
+            Directory.CreateDirectory(updaterDirectory);
+            var updaterExecutable = Path.Combine(
+                updaterDirectory,
+                $"Signaller-Updater-{Guid.NewGuid():N}.exe");
+            File.Copy(executable, updaterExecutable);
+
+            var updateRequest = new AppUpdateRequest(
+                _availableUpdate.Version,
+                _availableUpdate.InstallerUrl,
+                _availableUpdate.Sha256,
+                Environment.ProcessId,
+                executable);
+            var updateProcess = new ProcessStartInfo(updaterExecutable)
             {
-                GitHubReleaseUpdater.LaunchInstaller(installerPath);
-                Application.Current.Shutdown();
-                return;
-            }
+                UseShellExecute = true,
+                WorkingDirectory = updaterDirectory
+            };
+            foreach (var argument in updateRequest.ToArguments())
+                updateProcess.ArgumentList.Add(argument);
 
-            UpdateButton.Content = $"INSTALL UPDATE { _availableUpdate.Version }";
-            DisplayLatestNotification("The downloaded update is ready; select the update button to install it.");
+            if (Process.Start(updateProcess) is null)
+                throw new InvalidOperationException("The Signaller update screen could not be started.");
+            Application.Current.Shutdown();
         }
-        catch (ObjectDisposedException) when (_windowLifetime.IsCancellationRequested)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.ComponentModel.Win32Exception or InvalidOperationException or SecurityException)
         {
-        }
-        catch (Exception exception) when (exception is HttpRequestException or IOException
-            or InvalidDataException or UnauthorizedAccessException or System.ComponentModel.Win32Exception
-            or JsonException or TaskCanceledException)
-        {
-            if (_windowLifetime.IsCancellationRequested) return;
-            UpdateButton.Content = "CHECK UPDATES";
-            DisplayLatestNotification($"Update failed: {exception.Message}");
-            MessageBox.Show(exception.Message, "Signaller update failed", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            _updateRequestInProgress = false;
-            if (!_windowLifetime.IsCancellationRequested)
-                UpdateButton.IsEnabled = true;
+            MessageBox.Show(
+                exception.Message,
+                "Signaller update could not be started",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 
@@ -342,8 +352,8 @@ public partial class MainWindow : Window
     {
         if (_updateRequestInProgress) return;
         _updateRequestInProgress = true;
-        UpdateButton.IsEnabled = false;
-        UpdateButton.Content = "CHECKING…";
+        UpdateButton.Content = "SEARCHING…";
+        UpdateButton.ToolTip = "Checking GitHub for the latest Signaller release";
 
         try
         {
@@ -353,13 +363,13 @@ public partial class MainWindow : Window
             if (release is null)
             {
                 UpdateButton.Content = "UP TO DATE";
+                UpdateButton.ToolTip = "Click to check for updates now";
                 DisplayLatestNotification("You have the latest version of Signaller.");
-                await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
-                UpdateButton.Content = "CHECK UPDATES";
             }
             else
             {
                 UpdateButton.Content = $"UPDATE · {release.Version}";
+                UpdateButton.ToolTip = $"Download and install Signaller {release.Version}";
                 DisplayLatestNotification($"Signaller {release.Version} is available.");
             }
         }
@@ -367,13 +377,13 @@ public partial class MainWindow : Window
         {
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException
-            or InvalidDataException or JsonException or TaskCanceledException)
+            or InvalidDataException or JsonException or TaskCanceledException or InvalidOperationException)
         {
             if (cancellationToken.IsCancellationRequested) return;
+            _availableUpdate = null;
             UpdateButton.Content = "CHECK FAILED";
+            UpdateButton.ToolTip = "Could not check for updates. Click to try again.";
             DisplayLatestNotification($"Could not check for updates: {exception.Message}");
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-            UpdateButton.Content = "CHECK UPDATES";
         }
         finally
         {
@@ -404,9 +414,64 @@ public partial class MainWindow : Window
         _windowLifetime.Cancel();
         SaveGame();
         _timer.Stop();
+        _updateCheckTimer.Stop();
+        _updaterCleanupTimer.Stop();
         _updater.Dispose();
         _windowLifetime.Dispose();
     }
+
+    private void CleanupUpdaterCopies()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "Signaller", "updater");
+        if (!Directory.Exists(directory))
+        {
+            _updaterCleanupTimer.Stop();
+            return;
+        }
+
+        try
+        {
+            string? cleanupError = null;
+            foreach (var file in Directory.EnumerateFiles(directory, "Signaller-Updater-*.exe"))
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (IOException exception)
+                {
+                    cleanupError = exception.Message;
+                }
+            }
+
+            if (!Directory.EnumerateFileSystemEntries(directory).Any())
+            {
+                Directory.Delete(directory);
+                _updaterCleanupTimer.Stop();
+                return;
+            }
+
+            if (++_updaterCleanupAttempts >= 30)
+            {
+                _updaterCleanupTimer.Stop();
+                DisplayLatestNotification(cleanupError is null
+                    ? "The previous updater is still finishing in the background."
+                    : $"Could not remove a temporary updater: {cleanupError}");
+            }
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            _updaterCleanupTimer.Stop();
+            DisplayLatestNotification($"Could not clean up the temporary updater: {exception.Message}");
+        }
+        catch (IOException exception)
+        {
+            _updaterCleanupTimer.Stop();
+            DisplayLatestNotification($"Could not clean up the temporary updater: {exception.Message}");
+        }
+    }
+
+    private int _updaterCleanupAttempts;
 
     private void DisplayLatestNotification(string? fallback = null)
     {
@@ -438,10 +503,15 @@ public partial class MainWindow : Window
 
 public sealed class RailwaySurface : FrameworkElement
 {
-    private static readonly Color CanvasColor = Color.FromRgb(17, 25, 32);
-    private static readonly Color TrackBedColor = Color.FromRgb(39, 52, 62);
-    private static readonly Color RailColor = Color.FromRgb(115, 128, 138);
-    private static readonly Color TieColor = Color.FromRgb(62, 75, 85);
+    private static readonly LinearGradientBrush CanvasBrush = CreateCanvasBrush();
+    private static readonly SolidColorBrush AmbientNodeBrush = CreateFrozenBrush(Color.FromArgb(52, 111, 143, 148));
+    private static readonly Pen AmbientGridPen = CreateFrozenPen(Color.FromArgb(15, 123, 153, 158), 1);
+    private static readonly Pen EditorGridPen = CreateFrozenPen(Color.FromArgb(31, 147, 168, 180), 0.65);
+    private static readonly Pen TrackShadowPen = CreateFrozenPen(Color.FromArgb(86, 2, 8, 12), 29);
+    private static readonly Pen TrackBedPen = CreateFrozenPen(Color.FromRgb(39, 55, 62), 23);
+    private static readonly Pen TiePen = CreateFrozenPen(Color.FromRgb(62, 78, 84), 1);
+    private static readonly Pen RailPen = CreateFrozenPen(Color.FromRgb(126, 145, 149), 1.7);
+
     public GameEngine? Engine { get; set; }
 
     public WpfPoint? MouseToWorld(WpfPoint position)
@@ -460,7 +530,7 @@ public sealed class RailwaySurface : FrameworkElement
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
-        drawingContext.DrawRectangle(new SolidColorBrush(CanvasColor), null, new Rect(RenderSize));
+        drawingContext.DrawRectangle(CanvasBrush, null, new Rect(RenderSize));
 
         if (Engine is null || ActualWidth <= 0 || ActualHeight <= 0) return;
         var scale = Math.Min(ActualWidth / GameEngine.WorldWidth, ActualHeight / GameEngine.WorldHeight);
@@ -468,6 +538,7 @@ public sealed class RailwaySurface : FrameworkElement
         var offsetY = (ActualHeight - GameEngine.WorldHeight * scale) / 2;
         drawingContext.PushTransform(new MatrixTransform(new Matrix(scale, 0, 0, scale, offsetX, offsetY)));
 
+        DrawAmbientGrid(drawingContext);
         if (Engine.Mode == GameMode.Editor) DrawGrid(drawingContext);
         DrawTrack(drawingContext, GameEngine.MainLoop, closed: true);
         DrawBranch(drawingContext);
@@ -490,13 +561,27 @@ public sealed class RailwaySurface : FrameworkElement
         drawingContext.Pop();
     }
 
+    private static void DrawAmbientGrid(DrawingContext drawingContext)
+    {
+        for (var x = 40d; x <= GameEngine.WorldWidth; x += 80)
+            drawingContext.DrawLine(AmbientGridPen,
+                new WpfPoint(x, 0), new WpfPoint(x, GameEngine.WorldHeight));
+        for (var y = 40d; y <= GameEngine.WorldHeight; y += 80)
+            drawingContext.DrawLine(AmbientGridPen,
+                new WpfPoint(0, y), new WpfPoint(GameEngine.WorldWidth, y));
+        for (var x = 40d; x < GameEngine.WorldWidth; x += 160)
+        for (var y = 40d; y < GameEngine.WorldHeight; y += 160)
+            drawingContext.DrawEllipse(AmbientNodeBrush, null, new WpfPoint(x, y), 1.4, 1.4);
+    }
+
     private static void DrawGrid(DrawingContext drawingContext)
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(22, 147, 168, 180)), 0.65);
         for (var x = 20d; x < GameEngine.WorldWidth; x += GameEngine.GridSize)
-            drawingContext.DrawLine(pen, new WpfPoint(x, 0), new WpfPoint(x, GameEngine.WorldHeight));
+            drawingContext.DrawLine(EditorGridPen,
+                new WpfPoint(x, 0), new WpfPoint(x, GameEngine.WorldHeight));
         for (var y = 20d; y < GameEngine.WorldHeight; y += GameEngine.GridSize)
-            drawingContext.DrawLine(pen, new WpfPoint(0, y), new WpfPoint(GameEngine.WorldWidth, y));
+            drawingContext.DrawLine(EditorGridPen,
+                new WpfPoint(0, y), new WpfPoint(GameEngine.WorldWidth, y));
     }
 
     private static void DrawTrack(DrawingContext drawingContext, IReadOnlyList<TrackPoint> points, bool closed)
@@ -508,19 +593,15 @@ public sealed class RailwaySurface : FrameworkElement
             context.PolyLineTo(points.Skip(1).Select(ToPoint).ToArray(), true, false);
         }
         geometry.Freeze();
-        drawingContext.DrawGeometry(null, new Pen(new SolidColorBrush(TrackBedColor), 24)
-        {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round,
-            LineJoin = PenLineJoin.Round
-        }, geometry);
+        drawingContext.DrawGeometry(null, TrackShadowPen, geometry);
+        drawingContext.DrawGeometry(null, TrackBedPen, geometry);
 
         for (var distance = 8d; distance < PolylineLength(points, closed); distance += 17)
         {
             var position = PositionAlong(points, distance, closed);
             var dx = -Math.Sin(position.Angle) * 8;
             var dy = Math.Cos(position.Angle) * 8;
-            drawingContext.DrawLine(new Pen(new SolidColorBrush(TieColor), 1),
+            drawingContext.DrawLine(TiePen,
                 new WpfPoint(position.X - dx, position.Y - dy),
                 new WpfPoint(position.X + dx, position.Y + dy));
         }
@@ -544,11 +625,7 @@ public sealed class RailwaySurface : FrameworkElement
                 points[(index + 2) % points.Count].X - end.X);
             var nextDx = -Math.Sin(nextAngle) * offset;
             var nextDy = Math.Cos(nextAngle) * offset;
-            drawingContext.DrawLine(new Pen(new SolidColorBrush(RailColor), 1.7)
-            {
-                StartLineCap = PenLineCap.Round,
-                EndLineCap = PenLineCap.Round
-            },
+            drawingContext.DrawLine(RailPen,
                 new WpfPoint(start.X + dx, start.Y + dy),
                 new WpfPoint(end.X + nextDx, end.Y + nextDy));
         }
@@ -753,6 +830,36 @@ public sealed class RailwaySurface : FrameworkElement
     }
 
     private static WpfPoint ToPoint(TrackPoint point) => new(point.X, point.Y);
+
+    private static LinearGradientBrush CreateCanvasBrush()
+    {
+        var brush = new LinearGradientBrush(
+            Color.FromRgb(20, 32, 38),
+            Color.FromRgb(14, 22, 29),
+            new WpfPoint(0, 0),
+            new WpfPoint(1, 1));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static SolidColorBrush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private static Pen CreateFrozenPen(Color color, double thickness)
+    {
+        var pen = new Pen(CreateFrozenBrush(color), thickness)
+        {
+            StartLineCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round
+        };
+        pen.Freeze();
+        return pen;
+    }
 
     private static double PolylineLength(IReadOnlyList<TrackPoint> points, bool closed)
     {

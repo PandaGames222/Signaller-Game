@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.2.0"
 #endif
 
 #ifndef PublishDir
@@ -15,6 +15,7 @@ AppId={{9A6F11C8-1E4D-44BC-AFE8-059DFE41F4AB}
 AppName=Signaller
 AppVersion={#AppVersion}
 AppPublisher=PandaGames222
+SetupIconFile=..\Assets\Signaller.ico
 DefaultDirName={localappdata}\Programs\Signaller
 DefaultGroupName=Signaller
 UninstallDisplayIcon={app}\Signaller.exe

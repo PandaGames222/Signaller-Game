@@ -1,0 +1,76 @@
+<Window x:Class="Signaller.UpdateWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Updating Signaller"
+        Icon="/Signaller;component/Assets/Signaller.ico"
+        Width="560"
+        Height="342"
+        MinWidth="560"
+        MaxWidth="560"
+        MinHeight="342"
+        MaxHeight="342"
+        WindowStartupLocation="CenterScreen"
+        Background="#0C1319"
+        Foreground="#EEF5F4"
+        FontFamily="Segoe UI"
+        ResizeMode="NoResize"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <Border Margin="1" CornerRadius="13" BorderBrush="#31434A" BorderThickness="1">
+        <Grid Background="#0F181E">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="68" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="54" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="24,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Image Grid.Column="0" Width="34" Height="34"
+                       Source="/Signaller;component/Assets/Signaller.ico" />
+                <StackPanel Grid.Column="1" Margin="11,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="SIGNALLER" FontSize="12" FontWeight="Bold" />
+                    <TextBlock Text="GAME UPDATE" Margin="0,3,0,0"
+                               Foreground="#91A39F" FontSize="9" />
+                </StackPanel>
+                <TextBlock x:Name="VersionBadge" Grid.Column="2" Text="VERSION 1.2.0"
+                           Foreground="#82E2BA" FontSize="9" VerticalAlignment="Center" />
+            </Grid>
+            <Border Grid.Row="0" VerticalAlignment="Bottom" BorderBrush="#293841"
+                    BorderThickness="0,0,0,1" />
+
+            <StackPanel Grid.Row="1" Margin="34,18">
+                <TextBlock x:Name="HeadingText" Text="Getting your update ready"
+                           FontSize="19" FontWeight="SemiBold" />
+                <TextBlock x:Name="StatusText"
+                           Text="Waiting for Signaller to close safely…"
+                           Margin="0,7,0,0" Foreground="#A1B2B7" FontSize="11"
+                           TextWrapping="Wrap" />
+                <ProgressBar x:Name="UpdateProgress" Height="7" Margin="0,23,0,0"
+                             Minimum="0" Maximum="100" Value="0"
+                             IsIndeterminate="True" />
+                <TextBlock x:Name="DetailsText" Text="Your game and saved progress will be kept."
+                           Margin="0,10,0,0" Foreground="#71848B" FontSize="10" />
+                <TextBlock x:Name="ErrorText" Visibility="Collapsed"
+                           Margin="0,11,0,0" Foreground="#FF9C9C" FontSize="10"
+                           TextWrapping="Wrap" MaxHeight="48" />
+            </StackPanel>
+
+            <Grid Grid.Row="2" Margin="24,0">
+                <TextBlock x:Name="FooterText" Text="PLEASE KEEP THIS WINDOW OPEN"
+                           VerticalAlignment="Center" Foreground="#71848B" FontSize="8" />
+                <StackPanel x:Name="RecoveryButtons" Orientation="Horizontal"
+                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                    <Button Content="OPEN SIGNALLER" Margin="0,0,8,0"
+                            Click="OpenSignallerButton_Click" />
+                    <Button Content="RETRY UPDATE" Click="RetryButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

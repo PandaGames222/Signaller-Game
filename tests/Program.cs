@@ -11,7 +11,9 @@ var tests = new (string Name, Action Run)[]
     ("editor charges builds and refunds half on demolition", EditorBuildsAndRefunds),
     ("editor refuses occupied and track-overlapping placements", EditorRejectsOccupiedPlacements),
     ("game save restores operation and editor state", GameSaveRestoresState),
-    ("invalid saves are rejected", InvalidSavesAreRejected)
+    ("invalid and overlapping saved items are rejected", InvalidSavesAreRejected),
+    ("large balances cannot overflow during train payments", LargeBalancesDoNotOverflow),
+    ("update requests validate the release, checksum, and install path", UpdateRequestsAreValidated)
 };
 
 var failures = new List<string>();
@@ -199,6 +201,59 @@ static void InvalidSavesAreRejected()
         Train: new(80, false, "In service"));
 
     Throws<InvalidDataException>(() => new GameEngine(invalid));
+
+    var engine = new GameEngine();
+    engine.SetMode(GameMode.Editor);
+    Check(engine.PlaceSelectedItem(40, 40), "A valid save item should be placeable.");
+    var validSave = engine.Save();
+    var overlappingSave = validSave with
+    {
+        PlacedItems = [.. validSave.PlacedItems, validSave.PlacedItems[0]]
+    };
+    Throws<InvalidDataException>(() => new GameEngine(overlappingSave));
+}
+
+static void LargeBalancesDoNotOverflow()
+{
+    var engine = new GameEngine();
+    var save = engine.Save() with { Balance = int.MaxValue };
+    var restored = new GameEngine(save);
+
+    for (var index = 0; index < 20 * 60; index++)
+        restored.Advance(1d / 60);
+    Equal(int.MaxValue, restored.Balance);
+}
+
+static void UpdateRequestsAreValidated()
+{
+    var valid = new[]
+    {
+        "--apply-update",
+        "1.2.0",
+        "https://github.com/PandaGames222/Signaller-Game/releases/download/v1.2.0/Signaller-Setup-1.2.0.exe",
+        new string('A', 64),
+        "42",
+        @"C:\Games\Signaller.exe"
+    };
+    Check(AppUpdateRequest.TryParse(valid, out var request), "A valid update request should be accepted.");
+    Equal(new Version(1, 2, 0), request!.Version);
+    Equal(@"C:\Games\Signaller.exe", request.GameExecutablePath);
+    Equal(valid.Length, request.ToArguments().Length);
+
+    foreach (var invalid in new[]
+    {
+        valid.Select((value, index) => index == 2
+            ? value.Replace("github.com", "example.com", StringComparison.Ordinal)
+            : value).ToArray(),
+        valid.Select((value, index) => index == 2
+            ? value.Replace("1.2.0", "1.3.0", StringComparison.Ordinal)
+            : value).ToArray(),
+        valid.Select((value, index) => index == 3 ? "not-a-checksum" : value).ToArray(),
+        valid.Select((value, index) => index == 5 ? @"C:\Games\other.exe" : value).ToArray(),
+        valid.Take(5).ToArray()
+    })
+        Check(!AppUpdateRequest.TryParse(invalid, out _),
+            "Invalid update URLs, checksums, target paths, or arguments must be rejected.");
 }
 
 static void RunUntilStopped(GameEngine engine, double seconds)

@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Signaller"
         Title="Signaller — Railway Control"
+        Icon="Assets/Signaller.ico"
         Width="1440"
         Height="900"
         MinWidth="1024"
@@ -13,7 +14,7 @@
         FontFamily="Segoe UI"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True">
-    <Grid Margin="42,0">
+    <Grid Margin="36,0">
         <Grid.RowDefinitions>
             <RowDefinition Height="78" />
             <RowDefinition Height="120" />
@@ -28,10 +29,10 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                <Border Width="36" Height="36" CornerRadius="10" Background="#192922"
-                        BorderBrush="#416353" BorderThickness="1">
-                    <TextBlock Text="S" Foreground="#73E0B0" FontSize="21" FontWeight="Bold"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Border Width="38" Height="38" CornerRadius="11"
+                        Background="{StaticResource CardBackground}"
+                        BorderBrush="#36554A" BorderThickness="1">
+                    <Image Source="Assets/Signaller.ico" Width="31" Height="31" />
                 </Border>
                 <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="SIGNALLER" FontSize="13" FontWeight="Bold" />
@@ -57,8 +58,12 @@
 
             <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
                         Orientation="Horizontal">
-                <Ellipse Width="7" Height="7" Margin="0,0,8,0" Fill="#73E0B0" />
-                <TextBlock x:Name="VersionText" Text="VERSION 1.1.0" Foreground="#82909D"
+                <Ellipse Width="7" Height="7" Margin="0,0,8,0" Fill="#73E0B0">
+                    <Ellipse.Effect>
+                        <DropShadowEffect BlurRadius="8" ShadowDepth="0" Opacity="0.8" Color="#73E0B0" />
+                    </Ellipse.Effect>
+                </Ellipse>
+                <TextBlock x:Name="VersionText" Text="VERSION 1.2.0" Foreground="#82909D"
                            FontSize="9" VerticalAlignment="Center" />
                 <Button x:Name="UpdateButton" Content="CHECK UPDATES" Margin="10,0,0,0"
                         Padding="9,7" FontSize="9" Click="UpdateButton_Click"
@@ -68,7 +73,7 @@
         <Border Grid.Row="0" VerticalAlignment="Bottom" BorderBrush="#26313C"
                 BorderThickness="0,0,0,1" />
 
-        <Grid Grid.Row="1" Margin="0,10,0,14">
+        <Grid Grid.Row="1" Margin="0,9,0,13">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="190" />
@@ -82,47 +87,44 @@
                 <TextBlock x:Name="ModeTitle" Text="Signaller desk" Margin="0,5,0,0"
                            FontSize="21" FontWeight="SemiBold" />
             </StackPanel>
-            <Border Grid.Column="1" Margin="5,0" Padding="12,9" CornerRadius="9"
-                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+            <Border Grid.Column="1" Margin="5,0" Padding="12,9" CornerRadius="10"
+                    Background="{StaticResource CardBackground}" BorderBrush="{StaticResource Border}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="32" Height="32" CornerRadius="8" Background="#202E2A">
                         <TextBlock Text="$" Foreground="#73E0B0" FontSize="17" FontWeight="SemiBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="AVAILABLE BALANCE" Foreground="#82909D" FontSize="8"
-                                   />
+                        <TextBlock Text="AVAILABLE BALANCE" Foreground="#91A2AA" FontSize="8" />
                         <TextBlock x:Name="BalanceText" Text="$5,000" Margin="0,3,0,0"
                                    FontSize="15" FontWeight="SemiBold" />
                     </StackPanel>
                 </StackPanel>
             </Border>
-            <Border Grid.Column="2" Margin="5,0" Padding="12,9" CornerRadius="9"
-                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+            <Border Grid.Column="2" Margin="5,0" Padding="12,9" CornerRadius="10"
+                    Background="{StaticResource CardBackground}" BorderBrush="{StaticResource Border}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="32" Height="32" CornerRadius="8" Background="#202B35">
                         <TextBlock Text="↗" Foreground="#82B8E4" FontSize="17"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="NETWORK INCOME" Foreground="#82909D" FontSize="8"
-                                   />
+                        <TextBlock Text="NETWORK INCOME" Foreground="#91A2AA" FontSize="8" />
                         <TextBlock x:Name="IncomeText" Text="$0 / min" Margin="0,3,0,0"
                                    FontSize="15" FontWeight="SemiBold" />
                     </StackPanel>
                 </StackPanel>
             </Border>
-            <Border Grid.Column="3" Margin="5,0" Padding="12,9" CornerRadius="9"
-                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+            <Border Grid.Column="3" Margin="5,0" Padding="12,9" CornerRadius="10"
+                    Background="{StaticResource CardBackground}" BorderBrush="{StaticResource Border}" BorderThickness="1">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Width="32" Height="32" CornerRadius="8" Background="#2A261F">
                         <TextBlock Text="▰" Foreground="#F5BB61" FontSize="16"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="ACTIVE TRAINS" Foreground="#82909D" FontSize="8"
-                                   />
-                        <TextBlock x:Name="TrainStatusText" Text="01  in service" Margin="0,3,0,0"
+                        <TextBlock Text="ACTIVE TRAINS" Foreground="#91A2AA" FontSize="8" />
+                        <TextBlock x:Name="TrainStatusText" Text="01  IN SERVICE" Margin="0,3,0,0"
                                    FontSize="13" FontWeight="SemiBold" />
                     </StackPanel>
                 </StackPanel>
@@ -130,8 +132,7 @@
             <StackPanel Grid.Column="4" VerticalAlignment="Center" HorizontalAlignment="Right">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Ellipse Width="5" Height="5" Margin="0,0,5,0" Fill="#73E0B0" />
-                    <TextBlock Text="LIVE" Foreground="#73E0B0" FontSize="8"
-                               />
+                    <TextBlock Text="LIVE" Foreground="#73E0B0" FontSize="8" />
                 </StackPanel>
                 <TextBlock x:Name="ClockText" Text="08:00" Margin="0,3,0,0"
                            FontFamily="Consolas" FontSize="18" HorizontalAlignment="Right" />
@@ -140,8 +141,8 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="2" CornerRadius="12" Background="#121920" BorderBrush="#26323D"
-                BorderThickness="1" ClipToBounds="True">
+        <Border Grid.Row="2" CornerRadius="14" Background="#111A20" BorderBrush="#2C3B44"
+                BorderThickness="1" ClipToBounds="True" Effect="{StaticResource CardShadow}">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="EditorColumn" Width="0" />
@@ -152,8 +153,7 @@
                         BorderBrush="#26323D" BorderThickness="0,0,1,0" Visibility="Collapsed">
                     <DockPanel LastChildFill="True">
                         <StackPanel DockPanel.Dock="Top">
-                            <TextBlock Text="NETWORK BUILDER" Foreground="#82909D" FontSize="9"
-                                       />
+                            <TextBlock Text="NETWORK BUILDER" Foreground="#82909D" FontSize="9" />
                             <TextBlock Text="Build your railway" Margin="0,6,0,0" FontSize="17"
                                        FontWeight="SemiBold" />
                             <TextBlock Text="Select an item, then click an empty grid tile."
@@ -227,7 +227,7 @@
                             Margin="0,14,0,0" Padding="12,7" CornerRadius="7"
                             Background="#162620" BorderBrush="#3B574C" BorderThickness="1"
                             IsHitTestVisible="False"
-                            Visibility="Collapsed">
+                            Visibility="Collapsed" Effect="{StaticResource CardShadow}">
                         <TextBlock x:Name="StatusToast" Text="" Foreground="#C3F1D9" FontSize="11" />
                     </Border>
                     <Border Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Left"
@@ -267,7 +267,7 @@
             <TextBlock Text="Signaller" Foreground="#71808C" FontSize="9"
                        VerticalAlignment="Center">
                 <Run Text="v" />
-                <Run x:Name="FooterVersion" Text="1.1.0" Foreground="#89959E" />
+                <Run x:Name="FooterVersion" Text="1.2.0" Foreground="#89959E" />
             </TextBlock>
             <TextBlock Text="SAFE WORKING. EVERY JOURNEY." Foreground="#71808C" FontSize="8"
                        HorizontalAlignment="Right" VerticalAlignment="Center" />
