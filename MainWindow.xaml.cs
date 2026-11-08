@@ -61,7 +61,7 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning);
         }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.7.1";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.8.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
         _loadingSettings = true;
         EntrySoundCheckBox.IsChecked = _soundEnabled;
@@ -1367,15 +1367,11 @@ public sealed class RailwaySurface : FrameworkElement
                 : item.Station.GroupId);
         foreach (var group in groups)
         {
-            var platforms = group.OrderBy(item => item.Station.Platform, StringComparer.Ordinal).ToArray();
-            var routeId = platforms[0].RouteId;
-            var station = platforms[0].Station;
-            var position = engine.PositionAt(routeId, station.Distance);
+            var platforms = group.ToArray();
+            var central = platforms[0].Station.GroupId == "central";
             foreach (var (platformRouteId, platformStation) in platforms)
             {
                 var platformPosition = engine.PositionAt(platformRouteId, platformStation.Distance);
-                var tangentX = Math.Cos(platformPosition.Angle) * 13;
-                var tangentY = Math.Sin(platformPosition.Angle) * 13;
                 var indicator = engine.PlatformIndicatorFor(platformRouteId, platformStation);
                 var platformColor = indicator switch
                 {
@@ -1386,43 +1382,78 @@ public sealed class RailwaySurface : FrameworkElement
                     PlatformIndicator.Delayed => Color.FromRgb(242, 107, 114),
                     _ => Color.FromRgb(115, 224, 176)
                 };
-                drawingContext.DrawLine(CreateFrozenPen(platformColor, 3),
-                    new WpfPoint(platformPosition.X - tangentX, platformPosition.Y - tangentY),
-                    new WpfPoint(platformPosition.X + tangentX, platformPosition.Y + tangentY));
+                DrawRegularPlatform(
+                    drawingContext,
+                    platformPosition,
+                    platformStation.Platform,
+                    platformColor);
+
+                if (!central)
+                    DrawStationName(drawingContext, platformStation.Name,
+                        platformPosition.X, platformPosition.Y - 54);
             }
-            var panelHeight = 19 + platforms.Length * 11;
-            var panelX = Math.Clamp(position.X + 17, 4, GameEngine.WorldWidth - 139);
-            var panelY = Math.Clamp(position.Y - panelHeight - 22, 4, GameEngine.WorldHeight - panelHeight - 4);
-            drawingContext.DrawRoundedRectangle(
-                new SolidColorBrush(Color.FromRgb(18, 29, 37)),
-                stationPen,
-                new Rect(panelX, panelY, 135, panelHeight), 5, 5);
-            drawingContext.DrawText(CreateText(station.Name.ToUpperInvariant(), 7.5,
-                    Color.FromRgb(209, 225, 220), FontWeights.SemiBold),
-                new WpfPoint(panelX + 7, panelY + 4));
-            for (var index = 0; index < platforms.Length; index++)
-            {
-                var (platformRoute, platformStation) = platforms[index];
-                var indicator = engine.PlatformIndicatorFor(platformRoute, platformStation);
-                var indicatorColor = indicator switch
-                {
-                    PlatformIndicator.DoorsOpen => Colors.White,
-                    PlatformIndicator.ReadyToDepart
-                        when (int)(engine.GameSeconds * 2) % 2 == 0 => Color.FromRgb(245, 187, 97),
-                    PlatformIndicator.ReadyToDepart => Color.FromRgb(91, 73, 46),
-                    PlatformIndicator.Delayed => Color.FromRgb(242, 107, 114),
-                    _ => Color.FromRgb(67, 83, 91)
-                };
-                var rowY = panelY + 16 + index * 11;
-                drawingContext.DrawText(CreateText(platformStation.Platform.ToUpperInvariant(), 6.5,
-                        Color.FromRgb(145, 161, 168), FontWeights.Normal),
-                    new WpfPoint(panelX + 7, rowY));
-                drawingContext.DrawRoundedRectangle(
-                    new SolidColorBrush(indicatorColor),
-                    null,
-                    new Rect(panelX + 103, rowY + 1, 21, 5), 2, 2);
-            }
+
+            if (!central) continue;
+            var centralPositions = platforms
+                .Select(item => engine.PositionAt(item.RouteId, item.Station.Distance))
+                .ToArray();
+            var labelPosition = centralPositions.OrderBy(position => position.Y).First();
+            DrawStationName(drawingContext, platforms[0].Station.Name,
+                labelPosition.X, labelPosition.Y - 74);
         }
+    }
+
+    private static void DrawRegularPlatform(
+        DrawingContext drawingContext,
+        TrackPosition position,
+        string platform,
+        Color indicatorColor)
+    {
+        const double length = 148;
+        const double top = -34;
+        const double height = 18;
+        drawingContext.PushTransform(new RotateTransform(
+            position.Angle * 180 / Math.PI, position.X, position.Y));
+        drawingContext.DrawRoundedRectangle(
+            new SolidColorBrush(Color.FromRgb(91, 105, 109)),
+            new Pen(new SolidColorBrush(Color.FromRgb(153, 168, 166)), 1),
+            new Rect(position.X - length / 2, position.Y + top, length, height),
+            3,
+            3);
+        drawingContext.DrawLine(
+            new Pen(new SolidColorBrush(Color.FromRgb(230, 199, 101)), 1.5),
+            new WpfPoint(position.X - length / 2 + 5, position.Y + top + height - 2),
+            new WpfPoint(position.X + length / 2 - 5, position.Y + top + height - 2));
+        drawingContext.DrawEllipse(
+            new SolidColorBrush(indicatorColor),
+            null,
+            new WpfPoint(position.X + length / 2 - 13, position.Y + top + height / 2),
+            3.5,
+            3.5);
+        drawingContext.DrawText(
+            CreateText(platform.ToUpperInvariant(), 7, Color.FromRgb(20, 31, 36), FontWeights.SemiBold),
+            new WpfPoint(position.X - length / 2 + 13, position.Y + top + 4));
+        drawingContext.Pop();
+    }
+
+    private static void DrawStationName(
+        DrawingContext drawingContext,
+        string name,
+        double centerX,
+        double topY)
+    {
+        var text = CreateText(name.ToUpperInvariant(), 7.5,
+            Color.FromRgb(218, 228, 226), FontWeights.SemiBold);
+        var width = Math.Min(190, text.Width + 14);
+        var left = Math.Clamp(centerX - width / 2, 4, GameEngine.WorldWidth - width - 4);
+        drawingContext.DrawRoundedRectangle(
+            new SolidColorBrush(Color.FromRgb(24, 36, 42)),
+            new Pen(new SolidColorBrush(Color.FromRgb(72, 91, 96)), 0.8),
+            new Rect(left, topY, width, 15),
+            3,
+            3);
+        drawingContext.DrawText(text,
+            new WpfPoint(left + (width - text.Width) / 2, topY + 2));
     }
 
     private static void DrawNetworkLabels(DrawingContext drawingContext, GameEngine engine)
@@ -1434,16 +1465,26 @@ public sealed class RailwaySurface : FrameworkElement
                 entry.X + 54, entry.Y + (entry.Y < 180 ? 31 : entry.Y > 920 ? -31 : 30), 8,
                 Color.FromRgb(151, 174, 171));
             var exit = route.Points[^1];
-            DrawTextCentered(drawingContext, route.ExitName, exit.X - 32, exit.Y - 38, 8,
-                Color.FromRgb(245, 187, 97));
-            DrawTextCentered(drawingContext, route.Name, exit.X - 70, exit.Y + 23, 7,
-                Color.FromRgb(101, 118, 129));
+            if (engine.Style == GameStyle.Regular)
+            {
+                DrawTextCentered(drawingContext, $"{route.Name} · {route.ExitName}",
+                    exit.X - 92, exit.Y - 28, 8, Color.FromRgb(245, 187, 97));
+            }
+            else
+            {
+                DrawTextCentered(drawingContext, route.ExitName, exit.X - 32, exit.Y - 38, 8,
+                    Color.FromRgb(245, 187, 97));
+                DrawTextCentered(drawingContext, route.Name, exit.X - 70, exit.Y + 23, 7,
+                    Color.FromRgb(101, 118, 129));
+            }
         }
-        DrawTextCentered(drawingContext, "AUTOMATIC JUNCTION", 820, 593, 8,
-            Color.FromRgb(101, 118, 129));
-        if (engine.Style == GameStyle.Regular)
+        if (engine.Style == GameStyle.Original)
+        {
+            DrawTextCentered(drawingContext, "AUTOMATIC JUNCTION", 820, 593, 8,
+                Color.FromRgb(101, 118, 129));
             DrawTextCentered(drawingContext, "EAST JUNCTION", 1260, 385, 8,
                 Color.FromRgb(101, 118, 129));
+        }
     }
 
     private static void DrawSignal(DrawingContext drawingContext, GameEngine engine, Signal signal)

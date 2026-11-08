@@ -6,7 +6,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.7.1</Version>
+    <Version>1.8.0</Version>
     <AssemblyName>Signaller</AssemblyName>
     <RootNamespace>Signaller</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>

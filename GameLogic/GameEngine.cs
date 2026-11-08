@@ -133,7 +133,7 @@ public sealed class GameEngine
     public const double WorldWidth = 1800;
     public const double WorldHeight = 1100;
     public const double GridSize = 40;
-    public const int SaveVersion = 5;
+    public const int SaveVersion = 6;
     public const int StartingBalance = 5000;
     public const double SafetyDistance = 36;
     public const double SimulationClockRate = 3;
@@ -212,23 +212,49 @@ public sealed class GameEngine
         new(1760, 1000)
     ];
 
-    private static readonly TrackPoint[] RegularMainRoutePoints = SmoothRoute(
+    private static readonly TrackPoint[] LegacyRegularMainRoutePoints = SmoothRoute(
     [
         new(20, 530), new(240, 530), new(380, 500), new(600, 500), new(850, 500),
         new(1000, 480), new(1190, 420), new(1450, 420), new(1760, 460)
     ]);
-    private static readonly TrackPoint[] RegularNorthRoutePoints = SmoothRoute(
+    private static readonly TrackPoint[] LegacyRegularNorthRoutePoints = SmoothRoute(
     [
         new(150, 20), new(260, 120), new(380, 250), new(500, 370), new(620, 460),
         new(850, 460), new(980, 410), new(1070, 330), new(1130, 220), new(1130, 50)
     ]);
-    private static readonly TrackPoint[] RegularSouthRoutePoints = SmoothRoute(
+    private static readonly TrackPoint[] LegacyRegularSouthRoutePoints = SmoothRoute(
     [
         new(20, 1080), new(180, 960), new(320, 800), new(500, 650), new(620, 580),
         new(850, 580), new(980, 630), new(1070, 740), new(1100, 900), new(1100, 1080)
     ]);
-    private static readonly TrackPoint[] RegularAirportRoutePoints = SmoothRoute(AirportRoutePoints);
-    private static readonly TrackPoint[] RegularHarborRoutePoints = SmoothRoute(HarborRoutePoints);
+    private static readonly TrackPoint[] LegacyRegularAirportRoutePoints = SmoothRoute(AirportRoutePoints);
+    private static readonly TrackPoint[] LegacyRegularHarborRoutePoints = SmoothRoute(HarborRoutePoints);
+
+    private static readonly TrackPoint[] RegularMainRoutePoints = SmoothRoute(
+    [
+        new(20, 420), new(260, 420), new(390, 417), new(650, 420),
+        new(1050, 420), new(1230, 420), new(1430, 417), new(1760, 417)
+    ]);
+    private static readonly TrackPoint[] RegularNorthRoutePoints = SmoothRoute(
+    [
+        new(20, 485), new(260, 485), new(390, 482), new(650, 485),
+        new(1050, 485), new(1230, 485), new(1430, 488), new(1760, 488)
+    ]);
+    private static readonly TrackPoint[] RegularSouthRoutePoints = SmoothRoute(
+    [
+        new(20, 550), new(260, 550), new(390, 553), new(650, 550),
+        new(1050, 550), new(1230, 550), new(1430, 547), new(1760, 547)
+    ]);
+    private static readonly TrackPoint[] RegularAirportRoutePoints = SmoothRoute(
+    [
+        new(20, 615), new(260, 615), new(390, 612), new(650, 615),
+        new(1050, 615), new(1230, 615), new(1430, 618), new(1760, 618)
+    ]);
+    private static readonly TrackPoint[] RegularHarborRoutePoints = SmoothRoute(
+    [
+        new(20, 680), new(260, 680), new(390, 683), new(650, 680),
+        new(1050, 680), new(1230, 680), new(1430, 677), new(1760, 677)
+    ]);
 
     private static readonly RouteMetrics MainMetrics = MeasureRoute(MainRoutePoints);
     private static readonly RouteMetrics NorthMetrics = MeasureRoute(NorthRoutePoints);
@@ -238,6 +264,11 @@ public sealed class GameEngine
     private static readonly RouteMetrics RegularSouthMetrics = MeasureRoute(RegularSouthRoutePoints);
     private static readonly RouteMetrics RegularAirportMetrics = MeasureRoute(RegularAirportRoutePoints);
     private static readonly RouteMetrics RegularHarborMetrics = MeasureRoute(RegularHarborRoutePoints);
+    private static readonly RouteMetrics LegacyRegularMainMetrics = MeasureRoute(LegacyRegularMainRoutePoints);
+    private static readonly RouteMetrics LegacyRegularNorthMetrics = MeasureRoute(LegacyRegularNorthRoutePoints);
+    private static readonly RouteMetrics LegacyRegularSouthMetrics = MeasureRoute(LegacyRegularSouthRoutePoints);
+    private static readonly RouteMetrics LegacyRegularAirportMetrics = MeasureRoute(LegacyRegularAirportRoutePoints);
+    private static readonly RouteMetrics LegacyRegularHarborMetrics = MeasureRoute(LegacyRegularHarborRoutePoints);
     private static readonly string[] RouteIds = ["main", "north", "south", "airport", "harbor"];
     private static readonly string[] ServiceNames =
     [
@@ -312,31 +343,31 @@ public sealed class GameEngine
             {
                 ["main"] =
                 [
-                    new("Greyfield Central", "Platform 1", DistanceAlongTrack(RegularMainRoutePoints, 720, 500), "central"),
-                    new("Riverside", "Platform 6", DistanceAlongTrack(RegularMainRoutePoints, 1290, 420)),
-                    new("East Market", "Platform 7", DistanceAlongTrack(RegularMainRoutePoints, 1600, 440))
+                    new("Greyfield Central", "Platform 1", DistanceAlongTrack(RegularMainRoutePoints, 720, 412), "central"),
+                    new("Riverside", "Platform 6", DistanceAlongTrack(RegularMainRoutePoints, 1310, 410)),
+                    new("East Market", "Platform 7", DistanceAlongTrack(RegularMainRoutePoints, 1560, 406))
                 ],
                 ["north"] =
                 [
-                    new("Greyfield Central", "Platform 2", DistanceAlongTrack(RegularNorthRoutePoints, 720, 460), "central"),
-                    new("North Junction", "Platform 8", DistanceAlongTrack(RegularNorthRoutePoints, 1000, 390)),
-                    new("North Quay", "Platform 9", DistanceAlongTrack(RegularNorthRoutePoints, 1130, 120))
+                    new("Greyfield Central", "Platform 2", DistanceAlongTrack(RegularNorthRoutePoints, 720, 485), "central"),
+                    new("North Junction", "Platform 8", DistanceAlongTrack(RegularNorthRoutePoints, 1220, 485)),
+                    new("North Quay", "Platform 9", DistanceAlongTrack(RegularNorthRoutePoints, 1510, 488))
                 ],
                 ["south"] =
                 [
-                    new("Greyfield Central", "Platform 3", DistanceAlongTrack(RegularSouthRoutePoints, 720, 580), "central"),
-                    new("Market Cross", "Platform 10", DistanceAlongTrack(RegularSouthRoutePoints, 1030, 690)),
-                    new("Canal Park", "Platform 11", DistanceAlongTrack(RegularSouthRoutePoints, 1100, 990))
+                    new("Greyfield Central", "Platform 3", DistanceAlongTrack(RegularSouthRoutePoints, 720, 550), "central"),
+                    new("Market Cross", "Platform 10", DistanceAlongTrack(RegularSouthRoutePoints, 1260, 550)),
+                    new("Canal Park", "Platform 11", DistanceAlongTrack(RegularSouthRoutePoints, 1510, 547))
                 ],
                 ["airport"] =
                 [
-                    new("Greyfield Central", "Platform 4", DistanceAlongTrack(RegularAirportRoutePoints, 720, 540), "central"),
-                    new("Airport Parkway", "Platform 12", DistanceAlongTrack(RegularAirportRoutePoints, 1400, 205))
+                    new("Greyfield Central", "Platform 4", DistanceAlongTrack(RegularAirportRoutePoints, 720, 615), "central"),
+                    new("Airport Parkway", "Platform 12", DistanceAlongTrack(RegularAirportRoutePoints, 1460, 618))
                 ],
                 ["harbor"] =
                 [
-                    new("Greyfield Central", "Platform 5", DistanceAlongTrack(RegularHarborRoutePoints, 720, 620), "central"),
-                    new("Harbor Point", "Platform 13", DistanceAlongTrack(RegularHarborRoutePoints, 1370, 880))
+                    new("Greyfield Central", "Platform 5", DistanceAlongTrack(RegularHarborRoutePoints, 720, 680), "central"),
+                    new("Harbor Point", "Platform 13", DistanceAlongTrack(RegularHarborRoutePoints, 1460, 677))
                 ]
             }
             : new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
@@ -684,8 +715,8 @@ public sealed class GameEngine
         var signalNumber = 1;
         foreach (var (routeId, station) in AllStations)
         {
-            var beforeDistance = station.Distance - 55;
-            var afterDistance = station.Distance + 55;
+            var beforeDistance = station.Distance - 115;
+            var afterDistance = station.Distance + 115;
             if (beforeDistance <= 0 || afterDistance >= RouteMetricsFor(routeId).Total) continue;
 
             _signals.Add(new Signal
@@ -701,7 +732,7 @@ public sealed class GameEngine
                 Id = $"ST{signalNumber:D2}D",
                 RouteId = routeId,
                 Distance = afterDistance,
-                Side = 1,
+                Side = -1,
                 Aspect = SignalAspect.Green
             });
             signalNumber++;
@@ -716,12 +747,14 @@ public sealed class GameEngine
             var total = RouteMetricsFor(route.Id).Total;
             for (var distance = 130d; distance < total - 90; distance += 240)
             {
+                if (_stations[route.Id].Any(station => Math.Abs(distance - station.Distance) < 165))
+                    continue;
                 _signals.Add(new Signal
                 {
                     Id = $"R{signalNumber++:D2}",
                     RouteId = route.Id,
                     Distance = distance,
-                    Side = signalNumber % 2 == 0 ? -1 : 1,
+                    Side = -1,
                     Aspect = SignalAspect.Green
                 });
             }
@@ -1043,7 +1076,7 @@ public sealed class GameEngine
 
                     var departureObstacle = FindNextObstacle(train);
                     var departureGap = FindFollowingTrainGap(train);
-                    var signalHoldsPlatform = departureObstacle is { Distance: <= SafetyDistance + 55 };
+                    var signalHoldsPlatform = departureObstacle is { Distance: <= SafetyDistance + 115 };
                     var trafficHoldsPlatform = departureGap is { } platformTrafficGap
                         && platformTrafficGap <= SafetyDistance * 2;
                     if (signalHoldsPlatform || trafficHoldsPlatform)
@@ -1296,7 +1329,7 @@ public sealed class GameEngine
                 || item.X < 0 || item.X > WorldWidth || item.Y < 0 || item.Y > WorldHeight
                 || item.Rotation is not (0 or 90 or 180 or 270))
                 throw new InvalidDataException("The saved game contains an invalid trackside item.");
-            var overlapsRailway = save.Version >= SaveVersion && IsWithinTrackClearance(item.X, item.Y);
+            var overlapsRailway = save.Version >= 5 && IsWithinTrackClearance(item.X, item.Y);
             var overlapsPiece = PlacedItems.Any(existing =>
                 Distance(existing.X - item.X, existing.Y - item.Y) < GridSize * 0.75);
             if (overlapsRailway || overlapsPiece)
@@ -1327,7 +1360,7 @@ public sealed class GameEngine
         {
             if (signalState is null)
                 throw new InvalidDataException("The saved game contains an invalid signal.");
-            if (save.Style == GameStyle.Regular && save.Version < 5)
+            if (save.Style == GameStyle.Regular && save.Version < SaveVersion)
                 continue;
             var id = save.Version == 1
                 ? signalState.Id switch { "S1" => "S02", "S2" => "S05", _ => signalState.Id }
@@ -1343,22 +1376,31 @@ public sealed class GameEngine
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var trainState in trainStates)
         {
-            var legacyRegularSave = save.Style == GameStyle.Regular && save.Version < 5;
+            var legacyRegularSave = save.Style == GameStyle.Regular && save.Version < SaveVersion;
             var distance = trainState?.Distance ?? double.NaN;
             if (trainState is not null && double.IsFinite(distance))
             {
                 if (save.Version == 1)
                     distance = Math.Clamp(distance, 0, MainMetrics.Total);
-                else if (save.Style == GameStyle.Regular && save.Version < 5
+                else if (legacyRegularSave
                     && _metrics.TryGetValue(trainState.RouteId, out var updatedMetrics))
                 {
-                    var previousMetrics = trainState.RouteId switch
+                    var previousMetrics = save.Version < 5
+                        ? trainState.RouteId switch
+                        {
+                            "north" => NorthMetrics,
+                            "south" => SouthMetrics,
+                            "airport" => MeasureRoute(AirportRoutePoints),
+                            "harbor" => MeasureRoute(HarborRoutePoints),
+                            _ => MainMetrics
+                        }
+                        : trainState.RouteId switch
                     {
-                        "north" => NorthMetrics,
-                        "south" => SouthMetrics,
-                        "airport" => MeasureRoute(AirportRoutePoints),
-                        "harbor" => MeasureRoute(HarborRoutePoints),
-                        _ => MainMetrics
+                        "north" => LegacyRegularNorthMetrics,
+                        "south" => LegacyRegularSouthMetrics,
+                        "airport" => LegacyRegularAirportMetrics,
+                        "harbor" => LegacyRegularHarborMetrics,
+                        _ => LegacyRegularMainMetrics
                     };
                     distance = Math.Clamp(distance / previousMetrics.Total * updatedMetrics.Total,
                         0, updatedMetrics.Total);

@@ -8,6 +8,7 @@ var tests = new (string Name, Action Run)[]
     ("automatic routing serves all three terminal branches", AutomaticRoutingServesThreeTerminals),
     ("regular mode has junctions, central platforms, side stations, and station signals", RegularModeBuildsExpandedNetwork),
     ("regular platforms use separate tracks and occupied blocks display red", RegularPlatformsAndOccupiedBlocks),
+    ("regular map upgrades migrate trains from the previous layout", RegularMapSavesMigrate),
     ("regular trains stop, open doors, wait safely, and resume at stations", RegularTrainsServeStations),
     ("trains enter the zone and trigger an arrival notification", TrainEntryIsReported),
     ("only safe signal and destination crossings pay", SafePassagesEarnMoney),
@@ -140,9 +141,9 @@ static void RegularModeBuildsExpandedNetwork()
         var stationSignals = engine.Signals
             .Where(signal => signal.RouteId == routeId || (station.GroupId == "central" && signal.RouteId == "common"))
             .ToArray();
-        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance + 55) < 0.001),
+        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance + 115) < 0.001),
             $"{station.Name} should have an approach signal.");
-        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance - 55) < 0.001),
+        Check(stationSignals.Any(signal => Math.Abs(signal.Distance - station.Distance - 115) < 0.001),
             $"{station.Name} should have a departure signal.");
     }
 }
@@ -162,8 +163,23 @@ static void RegularPlatformsAndOccupiedBlocks()
     {
         var dx = centralTracks[first].X - centralTracks[second].X;
         var dy = centralTracks[first].Y - centralTracks[second].Y;
-        Check(dx * dx + dy * dy > 20 * 20,
+        Check(dx * dx + dy * dy >= 50 * 50,
             "Each central platform must occupy its own route track.");
+    }
+
+    for (var distance = 100d; distance <= 1400; distance += 150)
+    {
+        var trackPositions = engine.Routes
+            .Select(route => engine.PositionAt(route.Id, distance))
+            .ToArray();
+        for (var first = 0; first < trackPositions.Length; first++)
+        for (var second = first + 1; second < trackPositions.Length; second++)
+        {
+            var dx = trackPositions[first].X - trackPositions[second].X;
+            var dy = trackPositions[first].Y - trackPositions[second].Y;
+            Check(dx * dx + dy * dy >= 48 * 48,
+                "Parallel rails should stay visibly separated across the station area.");
+        }
     }
 
     var mainSignal = engine.Signals
@@ -185,6 +201,34 @@ static void RegularPlatformsAndOccupiedBlocks()
     var restoredSignal = occupiedEngine.Signals.Single(signal => signal.Id == mainSignal.Id);
     Equal(SignalAspect.Green, restoredSignal.Aspect);
     Equal(SignalAspect.Red, occupiedEngine.DisplayedAspect(restoredSignal));
+}
+
+static void RegularMapSavesMigrate()
+{
+    var engine = new GameEngine(style: GameStyle.Regular);
+    var saved = engine.Save();
+    var priorTrain = saved.Trains!.First(train => train.RouteId == "main") with
+    {
+        Distance = 900,
+        Stopped = true,
+        Status = "At Greyfield Central · doors open",
+        StationDwellSeconds = 4,
+        StoppedAtStationDistance = 650
+    };
+    var previousLayout = saved with
+    {
+        Version = 5,
+        Train = priorTrain,
+        Trains = [priorTrain]
+    };
+
+    var restored = new GameEngine(previousLayout, GameStyle.Regular);
+    var migratedTrain = restored.Trains.Single();
+    Check(migratedTrain.Distance > 0 && migratedTrain.Distance < restored.TrackLength,
+        "A previous-layout train should be mapped onto the redesigned railway.");
+    Check(!migratedTrain.Stopped && migratedTrain.StoppedAtStationDistance is null,
+        "Previous-layout station stops should be safely cleared during migration.");
+    Equal("In service after network update", migratedTrain.Status);
 }
 
 static void RegularTrainsServeStations()
@@ -497,7 +541,7 @@ static void InvalidSavesAreRecovered()
     Check(restoredCurrentSave.Notifications.Any(notification => notification.Contains("the railway", StringComparison.Ordinal)),
         "The player should be told when a saved piece overlaps the built-in railway.");
 
-    var legacySaveWithTrackOverlap = currentSaveWithTrackOverlap with { Version = GameEngine.SaveVersion - 1 };
+    var legacySaveWithTrackOverlap = currentSaveWithTrackOverlap with { Version = 4 };
     var restoredLegacySave = new GameEngine(legacySaveWithTrackOverlap);
     Equal(1, restoredLegacySave.PlacedItems.Count);
 }

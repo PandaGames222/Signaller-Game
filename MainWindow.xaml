@@ -76,7 +76,7 @@
                         <DropShadowEffect BlurRadius="8" ShadowDepth="0" Opacity="0.8" Color="#73E0B0" />
                     </Ellipse.Effect>
                 </Ellipse>
-                <TextBlock x:Name="VersionText" Text="VERSION 1.7.1" Foreground="#82909D"
+                <TextBlock x:Name="VersionText" Text="VERSION 1.8.0" Foreground="#82909D"
                            FontSize="9" VerticalAlignment="Center" />
                 <Button x:Name="UpdateButton" Content="UPDATE" Margin="10,0,0,0"
                         Padding="9,7" FontSize="9" Click="UpdateButton_Click"
@@ -524,7 +524,7 @@
             <TextBlock Text="Signaller" Foreground="#71808C" FontSize="9"
                        VerticalAlignment="Center">
                 <Run Text="v" />
-                <Run x:Name="FooterVersion" Text="1.7.1" Foreground="#89959E" />
+                <Run x:Name="FooterVersion" Text="1.8.0" Foreground="#89959E" />
             </TextBlock>
             <TextBlock Text="SAFE WORKING. EVERY JOURNEY." Foreground="#71808C" FontSize="8"
                        HorizontalAlignment="Right" VerticalAlignment="Center" />
