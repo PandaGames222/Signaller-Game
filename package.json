@@ -1,0 +1,12 @@
+{
+  "name": "signaller-game",
+  "version": "1.0.0",
+  "description": "A standalone 2D railway signalling and network-building game.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}
