@@ -968,6 +968,9 @@ public sealed class GameEngine
         RealSeconds = save.RealSeconds;
         if (save.PlacedItems.Count > 10_000)
             throw new InvalidDataException("The saved game contains too many trackside items.");
+        var railwayOverlaps = 0;
+        var pieceOverlaps = 0;
+        var omittedLocations = new List<string>(3);
         foreach (var item in save.PlacedItems)
         {
             if (item is null)
@@ -984,10 +987,30 @@ public sealed class GameEngine
                 || item.X < 0 || item.X > WorldWidth || item.Y < 0 || item.Y > WorldHeight
                 || item.Rotation is not (0 or 90 or 180 or 270))
                 throw new InvalidDataException("The saved game contains an invalid trackside item.");
-            if ((save.Version > 1 && IsWithinTrackClearance(item.X, item.Y))
-                || PlacedItems.Any(existing => Distance(existing.X - item.X, existing.Y - item.Y) < GridSize * 0.75))
-                throw new InvalidDataException("The saved game contains overlapping trackside items.");
+            var overlapsRailway = save.Version >= SaveVersion && IsWithinTrackClearance(item.X, item.Y);
+            var overlapsPiece = PlacedItems.Any(existing =>
+                Distance(existing.X - item.X, existing.Y - item.Y) < GridSize * 0.75);
+            if (overlapsRailway || overlapsPiece)
+            {
+                if (overlapsRailway) railwayOverlaps++;
+                else pieceOverlaps++;
+                if (omittedLocations.Count < 3)
+                    omittedLocations.Add($"({item.X:0}, {item.Y:0})");
+                continue;
+            }
             PlacedItems.Add(item);
+        }
+
+        var omittedCount = railwayOverlaps + pieceOverlaps;
+        if (omittedCount > 0)
+        {
+            var reasons = new List<string>(2);
+            if (railwayOverlaps > 0) reasons.Add($"{railwayOverlaps} overlapping the railway");
+            if (pieceOverlaps > 0) reasons.Add($"{pieceOverlaps} overlapping other built pieces");
+            var locations = string.Join(", ", omittedLocations);
+            var locationSummary = omittedCount > omittedLocations.Count ? $"{locations}, ..." : locations;
+            _notifications.Add(
+                $"{omittedCount} saved trackside item(s) ({string.Join("; ", reasons)}) were omitted at {locationSummary}. The rest of your save was restored.");
         }
 
         RebuildEditorRoutes(notify: false);

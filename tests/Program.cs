@@ -15,7 +15,7 @@ var tests = new (string Name, Action Run)[]
     ("game save restores operation and editor state", GameSaveRestoresState),
     ("original and regular saves preserve their selected game style", GameStylesPersistIndependently),
     ("version one saves migrate without manual switch controls", LegacySavesMigrate),
-    ("invalid and overlapping saved items are rejected", InvalidSavesAreRejected),
+    ("invalid saves are rejected and conflicting saved items are recovered", InvalidSavesAreRecovered),
     ("large balances cannot overflow during train payments", LargeBalancesDoNotOverflow),
     ("update requests validate the release, checksum, and install path", UpdateRequestsAreValidated)
 };
@@ -329,7 +329,7 @@ static void LegacySavesMigrate()
     Equal(SignalAspect.Yellow, restored.Signals.Single(signal => signal.Id == "S05").Aspect);
 }
 
-static void InvalidSavesAreRejected()
+static void InvalidSavesAreRecovered()
 {
     var invalid = new GameSaveData(
         Version: 99,
@@ -353,7 +353,22 @@ static void InvalidSavesAreRejected()
     {
         PlacedItems = [.. validSave.PlacedItems, validSave.PlacedItems[0]]
     };
-    Throws<InvalidDataException>(() => new GameEngine(overlappingSave));
+    var restored = new GameEngine(overlappingSave);
+    Equal(1, restored.PlacedItems.Count);
+    Equal(validSave.Balance, restored.Balance);
+    Check(restored.Notifications.Any(notification => notification.Contains("other built pieces", StringComparison.Ordinal)),
+        "The player should be told when a duplicate saved piece is omitted.");
+
+    var trackOverlappingItem = new PlacedItem(BuildItemKind.StraightTrack, 200, 550, 100, 0);
+    var currentSaveWithTrackOverlap = validSave with { PlacedItems = [trackOverlappingItem] };
+    var restoredCurrentSave = new GameEngine(currentSaveWithTrackOverlap);
+    Equal(0, restoredCurrentSave.PlacedItems.Count);
+    Check(restoredCurrentSave.Notifications.Any(notification => notification.Contains("the railway", StringComparison.Ordinal)),
+        "The player should be told when a saved piece overlaps the built-in railway.");
+
+    var legacySaveWithTrackOverlap = currentSaveWithTrackOverlap with { Version = GameEngine.SaveVersion - 1 };
+    var restoredLegacySave = new GameEngine(legacySaveWithTrackOverlap);
+    Equal(1, restoredLegacySave.PlacedItems.Count);
 }
 
 static void LargeBalancesDoNotOverflow()
