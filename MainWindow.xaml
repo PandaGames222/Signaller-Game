@@ -1,0 +1,276 @@
+<Window x:Class="Signaller.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Signaller"
+        Title="Signaller — Railway Control"
+        Width="1440"
+        Height="900"
+        MinWidth="1024"
+        MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        Background="#0D1218"
+        Foreground="#E7EDF3"
+        FontFamily="Segoe UI"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <Grid Margin="42,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="78" />
+            <RowDefinition Height="120" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="39" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Width="36" Height="36" CornerRadius="10" Background="#192922"
+                        BorderBrush="#416353" BorderThickness="1">
+                    <TextBlock Text="S" Foreground="#73E0B0" FontSize="21" FontWeight="Bold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="SIGNALLER" FontSize="13" FontWeight="Bold" />
+                    <TextBlock Text="RAILWAY CONTROL" Margin="0,3,0,0" FontSize="9"
+                               Foreground="#82909D" />
+                </StackPanel>
+            </StackPanel>
+
+            <Border Grid.Column="1" Padding="4" Background="#111820"
+                    BorderBrush="#293541" BorderThickness="1" CornerRadius="9">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="SignallerModeButton"
+                                 GroupName="GameMode"
+                                 Content="◉   Signaller Mode"
+                                 IsChecked="True"
+                                 Checked="SignallerModeButton_Checked" />
+                    <RadioButton x:Name="EditorModeButton"
+                                 GroupName="GameMode"
+                                 Content="⌘   Editor Mode"
+                                 Checked="EditorModeButton_Checked" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Orientation="Horizontal">
+                <Ellipse Width="7" Height="7" Margin="0,0,8,0" Fill="#73E0B0" />
+                <TextBlock x:Name="VersionText" Text="VERSION 1.1.0" Foreground="#82909D"
+                           FontSize="9" VerticalAlignment="Center" />
+                <Button x:Name="UpdateButton" Content="CHECK UPDATES" Margin="10,0,0,0"
+                        Padding="9,7" FontSize="9" Click="UpdateButton_Click"
+                        ToolTip="Check for an updated version of Signaller" />
+            </StackPanel>
+        </Grid>
+        <Border Grid.Row="0" VerticalAlignment="Bottom" BorderBrush="#26313C"
+                BorderThickness="0,0,0,1" />
+
+        <Grid Grid.Row="1" Margin="0,10,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="190" />
+                <ColumnDefinition Width="190" />
+                <ColumnDefinition Width="190" />
+                <ColumnDefinition Width="108" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock x:Name="ModeEyebrow" Text="NETWORK OPERATIONS" Foreground="#82909D"
+                           FontSize="9" />
+                <TextBlock x:Name="ModeTitle" Text="Signaller desk" Margin="0,5,0,0"
+                           FontSize="21" FontWeight="SemiBold" />
+            </StackPanel>
+            <Border Grid.Column="1" Margin="5,0" Padding="12,9" CornerRadius="9"
+                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="32" Height="32" CornerRadius="8" Background="#202E2A">
+                        <TextBlock Text="$" Foreground="#73E0B0" FontSize="17" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="AVAILABLE BALANCE" Foreground="#82909D" FontSize="8"
+                                   />
+                        <TextBlock x:Name="BalanceText" Text="$5,000" Margin="0,3,0,0"
+                                   FontSize="15" FontWeight="SemiBold" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Margin="5,0" Padding="12,9" CornerRadius="9"
+                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="32" Height="32" CornerRadius="8" Background="#202B35">
+                        <TextBlock Text="↗" Foreground="#82B8E4" FontSize="17"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="NETWORK INCOME" Foreground="#82909D" FontSize="8"
+                                   />
+                        <TextBlock x:Name="IncomeText" Text="$0 / min" Margin="0,3,0,0"
+                                   FontSize="15" FontWeight="SemiBold" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="3" Margin="5,0" Padding="12,9" CornerRadius="9"
+                    Background="#141B23" BorderBrush="#202B35" BorderThickness="1">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="32" Height="32" CornerRadius="8" Background="#2A261F">
+                        <TextBlock Text="▰" Foreground="#F5BB61" FontSize="16"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="ACTIVE TRAINS" Foreground="#82909D" FontSize="8"
+                                   />
+                        <TextBlock x:Name="TrainStatusText" Text="01  in service" Margin="0,3,0,0"
+                                   FontSize="13" FontWeight="SemiBold" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <StackPanel Grid.Column="4" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Ellipse Width="5" Height="5" Margin="0,0,5,0" Fill="#73E0B0" />
+                    <TextBlock Text="LIVE" Foreground="#73E0B0" FontSize="8"
+                               />
+                </StackPanel>
+                <TextBlock x:Name="ClockText" Text="08:00" Margin="0,3,0,0"
+                           FontFamily="Consolas" FontSize="18" HorizontalAlignment="Right" />
+                <TextBlock Text="NETWORK TIME" Foreground="#82909D" FontSize="8"
+                           HorizontalAlignment="Right" />
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="2" CornerRadius="12" Background="#121920" BorderBrush="#26323D"
+                BorderThickness="1" ClipToBounds="True">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="EditorColumn" Width="0" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border x:Name="EditorPanel" Grid.Column="0" Padding="16" Background="#151D25"
+                        BorderBrush="#26323D" BorderThickness="0,0,1,0" Visibility="Collapsed">
+                    <DockPanel LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Top">
+                            <TextBlock Text="NETWORK BUILDER" Foreground="#82909D" FontSize="9"
+                                       />
+                            <TextBlock Text="Build your railway" Margin="0,6,0,0" FontSize="17"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="Select an item, then click an empty grid tile."
+                                       Margin="0,7,0,15" Foreground="#82909D" FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <StackPanel DockPanel.Dock="Bottom">
+                            <TextBlock Text="New pieces expand the network visually. Existing trains stay on their assigned route."
+                                       Margin="2,12,2,12" Foreground="#96A4AE" FontSize="10"
+                                       TextWrapping="Wrap" LineHeight="15" />
+                            <Button x:Name="DemolishButton" Content="⌫   Demolish · 50% refund"
+                                    Click="DemolishButton_Click" />
+                        </StackPanel>
+
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="BuildList" />
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+
+                <Grid Grid.Column="1" ClipToBounds="True">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="49" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="34" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0" Margin="17,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="6" Height="6" Fill="#73E0B0" />
+                            <TextBlock Text="GREYFIELD LOOP" Margin="9,0,0,0" FontSize="10"
+                                       FontWeight="SemiBold" />
+                            <Border Height="13" Margin="10,0" BorderBrush="#34414D"
+                                    BorderThickness="1,0,0,0" />
+                            <TextBlock x:Name="MapSubtitle" Text="SIGNALLING DIAGRAM"
+                                       Foreground="#82909D" FontSize="9" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0">
+                                <Border Width="12" Height="2" Margin="0,0,5,0" Background="#788894" />
+                                <TextBlock Text="Track" Foreground="#82909D" FontSize="9" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0">
+                                <Ellipse Width="7" Height="7" Margin="0,0,5,0" Fill="#F26B72" />
+                                <TextBlock Text="Signal" Foreground="#82909D" FontSize="9" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0">
+                                <Border Width="12" Height="6" Margin="0,0,5,0" CornerRadius="2"
+                                        Background="#F5BB61" />
+                                <TextBlock Text="Train" Foreground="#82909D" FontSize="9" />
+                            </StackPanel>
+                            <Button x:Name="PauseButton" Content="Ⅱ" Width="29" Height="28"
+                                    Padding="0" Click="PauseButton_Click"
+                                    ToolTip="Pause the game simulation" />
+                        </StackPanel>
+                    </Grid>
+                    <Border Grid.Row="0" VerticalAlignment="Bottom" BorderBrush="#242E38"
+                            BorderThickness="0,0,0,1" />
+
+                    <local:RailwaySurface x:Name="Railway"
+                                          Grid.Row="1"
+                                          ClipToBounds="True"
+                                          MouseLeftButtonUp="Railway_MouseLeftButtonUp"
+                                          MouseMove="Railway_MouseMove"
+                                          MouseLeave="Railway_MouseLeave" />
+                    <Border x:Name="ToastBorder" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Top"
+                            Margin="0,14,0,0" Padding="12,7" CornerRadius="7"
+                            Background="#162620" BorderBrush="#3B574C" BorderThickness="1"
+                            IsHitTestVisible="False"
+                            Visibility="Collapsed">
+                        <TextBlock x:Name="StatusToast" Text="" Foreground="#C3F1D9" FontSize="11" />
+                    </Border>
+                    <Border Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Left"
+                            Margin="16,0,0,12" Padding="0" Background="#111920"
+                            Opacity="0.88" IsHitTestVisible="False">
+                        <TextBlock x:Name="CanvasHint"
+                                   Text="CLICK A SIGNAL TO CHANGE ITS ASPECT  ·  SET POINTS FOR THE MAIN LINE"
+                                   Foreground="#82909D" FontSize="8" />
+                    </Border>
+                    <Border Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Right"
+                            Margin="0,0,16,12" Padding="8,4" CornerRadius="5"
+                            Background="#111920" Opacity="0.88" IsHitTestVisible="False">
+                        <TextBlock x:Name="TrainAlertText" Visibility="Collapsed"
+                                   Foreground="#FFB0B3" FontSize="9" FontWeight="SemiBold" />
+                    </Border>
+                    <Grid Grid.Row="2" Margin="16,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="5" Height="5" Fill="#73E0B0" />
+                            <TextBlock Text=" SYSTEMS NOMINAL" Margin="6,0,0,0" Foreground="#9EB4A9"
+                                       FontSize="8" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="GREYFIELD CONTROL AREA  ·  2.4 KM"
+                                   Foreground="#71808C" FontSize="8" VerticalAlignment="Center"
+                                   />
+                    </Grid>
+                    <Border Grid.Row="2" VerticalAlignment="Top" BorderBrush="#242E38"
+                            BorderThickness="0,1,0,0" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3">
+            <TextBlock Text="Signaller" Foreground="#71808C" FontSize="9"
+                       VerticalAlignment="Center">
+                <Run Text="v" />
+                <Run x:Name="FooterVersion" Text="1.1.0" Foreground="#89959E" />
+            </TextBlock>
+            <TextBlock Text="SAFE WORKING. EVERY JOURNEY." Foreground="#71808C" FontSize="8"
+                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+        </Grid>
+    </Grid>
+</Window>

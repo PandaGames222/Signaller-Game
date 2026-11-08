@@ -1,38 +1,48 @@
 # Signaller
 
-A standalone Windows desktop railway signalling game built with Electron, Node.js, and an HTML5 Canvas. Run or install the game as a desktop app; it does not need a browser, account, or game server.
+Signaller is a standalone Windows railway-signalling game built with native WPF and .NET 8. It draws its track network directly with WPF; it does not use a browser, Electron, HTML, or a web server.
 
-## Build the Windows installer
+## Run from source
 
-- Node.js 18 or newer
-- npm (included with Node.js)
+Install the .NET 8 SDK and, on Windows, run these commands from the project directory:
 
-From a terminal in the project folder:
-
-```sh
-npm install
-npm run dist:win
+```powershell
+dotnet run --project Signaller.csproj
+dotnet run --project tests\Signaller.GameLogic.Tests.csproj
 ```
 
-The Windows x64 installer is written to `dist/Signaller-Setup-1.0.0.exe`. Run it to install Signaller with Start Menu and desktop shortcuts. The installer uses a stable Windows application ID, so running a newer installer upgrades an existing Signaller installation instead of creating a second copy. Your app data is not deleted during an upgrade or uninstall.
+The WPF application targets Windows x64. Game saves are stored under `%LOCALAPPDATA%\Signaller\game-state.json`.
 
-To run the desktop app directly during development, use `npm start`.
+## Build a standalone installer
 
-## Automatic updates
+Publish a self-contained, single-file Windows build and package it with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 
-The installed app displays its installed version and checks the configured GitHub releases for updates. When a newer version is published, it downloads in the background; select **Restart to update** to install it. The NSIS installer also upgrades the existing installation if you download and run it manually.
+```powershell
+dotnet publish Signaller.csproj -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+  -o dist\publish
+ISCC.exe /DAppVersion=1.1.0 /DPublishDir="..\dist\publish" /DOutputDir="..\dist" installer\Signaller.iss
+```
+
+The installer is written to `dist\Signaller-Setup-1.1.0.exe`. It installs per-user without administrator privileges and uses a stable application ID; installing a newer version upgrades the existing installation and keeps the saved game.
+
+## Automatic updates and GitHub releases
+
+The installed app checks the public GitHub releases for a newer version. When one is available, choose **UPDATE** to download and launch its installer. The installer upgrades the existing copy without removing saved data.
+
+If you are upgrading from the original 1.0 Electron app, run the 1.1 native installer once; future native releases can be installed from the app's update button.
 
 To publish a release:
 
-1. Increment the version in `package.json` and commit/push the change.
-2. Push a matching `v<version>` tag (for example, `v1.0.1`).
+1. Update the `<Version>` in `Signaller.csproj` and commit the change.
+2. Push a matching version tag, such as `v1.1.0`.
 
-The [GitHub Actions workflow](./.github/workflows/release.yml) builds the Windows installer and uploads the installer, blockmap, and updater metadata. The repository `PandaGames222/Signaller-Game` is public so installed copies can access releases without an embedded private token. Each published release is available to download and powers the app's built-in updater.
+The [GitHub Actions workflow](./.github/workflows/release.yml) validates the tag, runs the game-logic regression tests, builds the self-contained Windows application, packages it, and attaches the installer to the GitHub release. Public release downloads let installed copies check and update without an embedded token.
 
 ## Play
 
-- In **Signaller Mode**, click a signal to cycle red → yellow → green. Click the points to switch between straight and diverging. Trains stop at red signals and points that do not match their assigned route.
-- Switch to **Editor Mode**, select a build item, and click a grid tile to place it. Placed items can be removed in demolish mode for a 50% refund.
-- The train runs the Greyfield Loop and earns section payments while the simulation is running. Use the pause button to stop the simulation.
+- In **Signaller Mode**, click a signal to cycle red → yellow → green and click the points to change their direction. A train stops safely before a red signal or points set against its assigned route.
+- Switch to **Editor Mode**, select a trackside item, and click a clear grid tile to place it. Demolishing a piece refunds 50% of its cost.
+- The train runs the Greyfield Loop and earns payments for safe section and destination crossings. Use the pause button to stop the simulation.
 
 Editor additions are visual prototypes and do not yet alter the operating route.
