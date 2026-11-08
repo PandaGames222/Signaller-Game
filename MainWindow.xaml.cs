@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     private double _lastSaveSeconds;
     private bool _saveFailed;
     private bool _updateRequestInProgress;
+    private bool _modeLoadInProgress;
+    private bool _gameStarting;
     private bool _inGame;
     private bool _loadingSettings;
     private bool _soundEnabled = true;
@@ -55,7 +57,7 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning);
         }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.4.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.5.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
         _loadingSettings = true;
         EntrySoundCheckBox.IsChecked = _soundEnabled;
@@ -259,17 +261,29 @@ public partial class MainWindow : Window
         ModeNavigation.Visibility = Visibility.Collapsed;
     }
 
-    private void GameStyleButton_Click(object sender, RoutedEventArgs e)
+    private async void GameStyleButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: GameStyle style }) return;
+        if (_modeLoadInProgress || sender is not Button { Tag: GameStyle style }) return;
+        if (_inGame && !SaveGame()) return;
 
+        var lifetimeToken = _windowLifetime.Token;
+        _inGame = false;
+        _gameStarting = true;
+        _modeLoadInProgress = true;
+        GameLoadingText.Text = $"Loading {style} railway...";
+        GameLoadingOverlay.Visibility = Visibility.Visible;
         try
         {
-            if (_engine.Style != style)
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (lifetimeToken.IsCancellationRequested) return;
+            var nextEngine = _engine.Style == style
+                ? _engine
+                : await Task.Run(
+                    () => new GameEngine(GameSaveStore.Load(style), style),
+                    lifetimeToken);
+            if (lifetimeToken.IsCancellationRequested) return;
+            if (!ReferenceEquals(_engine, nextEngine))
             {
-                var savedGame = GameSaveStore.Load(style);
-                var nextEngine = new GameEngine(savedGame, style);
-                if (_inGame) SaveGame();
                 _engine.TrainEnteredZone -= Engine_TrainEnteredZone;
                 _engine = nextEngine;
                 _engine.TrainEnteredZone += Engine_TrainEnteredZone;
@@ -279,30 +293,45 @@ public partial class MainWindow : Window
             if (style == GameStyle.Regular && _engine.Mode != GameMode.Signaller)
                 _engine.SetMode(GameMode.Signaller);
 
-            _inGame = true;
-            _lastTickSeconds = _stopwatch.Elapsed.TotalSeconds;
-            _lastSaveSeconds = _lastTickSeconds;
             MenuOverlay.Visibility = Visibility.Collapsed;
             ModeNavigation.Visibility = Visibility.Visible;
             CloseDetails();
             ApplyMode();
             RefreshHud();
             RefreshRegularDesk();
+            GameLoadingOverlay.Visibility = Visibility.Collapsed;
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            if (lifetimeToken.IsCancellationRequested) return;
+            _lastTickSeconds = _stopwatch.Elapsed.TotalSeconds;
+            _lastSaveSeconds = _lastTickSeconds;
+            _gameStarting = false;
+            _inGame = true;
+            SaveGame();
+        }
+        catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
+        {
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
-            or JsonException or InvalidDataException or ArgumentException)
+            or JsonException or InvalidDataException or ArgumentException or InvalidOperationException)
         {
+            _gameStarting = false;
+            GameLoadingOverlay.Visibility = Visibility.Collapsed;
+            ShowMenuPanel(ModeSelectionPanel);
             MessageBox.Show(
                 $"Could not load {style} mode:\n{exception.Message}",
                 "Signaller — Game mode error",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+        finally
+        {
+            _modeLoadInProgress = false;
+        }
     }
 
     private void MenuButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_inGame) SaveGame();
+        if (_inGame && !SaveGame()) return;
         _inGame = false;
         CloseDetails();
         ShowMenuPanel(HomePanel);
@@ -336,15 +365,21 @@ public partial class MainWindow : Window
         var regular = _engine.Style == GameStyle.Regular;
         OriginalModeNavigation.Visibility = regular ? Visibility.Collapsed : Visibility.Visible;
         RegularModeNavigation.Visibility = regular ? Visibility.Visible : Visibility.Collapsed;
-        RegularDeskPanel.Visibility = _inGame && regular
+        RegularRailway.Engine = _engine;
+        RegularDeskPanel.Visibility = (_inGame || _gameStarting) && regular
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RegularRailway.Visibility = (_inGame || _gameStarting) && regular
             ? Visibility.Visible
             : Visibility.Collapsed;
         Railway.Visibility = regular ? Visibility.Collapsed : Visibility.Visible;
+        CanvasHint.Visibility = regular ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void RefreshRegularDesk()
     {
         if (_engine.Style != GameStyle.Regular) return;
+        RegularRailway.InvalidateVisual();
 
         RegularRoutesPanel.Children.Clear();
         foreach (var route in _engine.Routes)
@@ -533,7 +568,8 @@ public partial class MainWindow : Window
 
     private void Railway_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        var position = Railway.MouseToWorld(e.GetPosition(Railway));
+        if (sender is not RailwaySurface railway) return;
+        var position = railway.MouseToWorld(e.GetPosition(railway));
         if (position is null) return;
         var point = position.Value;
 
@@ -577,7 +613,8 @@ public partial class MainWindow : Window
 
     private void Railway_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (_engine.Mode != GameMode.Editor || Railway.MouseToWorld(e.GetPosition(Railway)) is not { } point)
+        if (sender is not RailwaySurface railway || _engine.Mode != GameMode.Editor
+            || railway.MouseToWorld(e.GetPosition(railway)) is not { } point)
             return;
 
         _engine.SetPreview(point.X, point.Y);
@@ -807,26 +844,42 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SaveGame()
+    private bool SaveGame()
     {
         try
         {
             GameSaveStore.Save(_engine.Save(), _engine.Style);
             _lastSaveSeconds = _stopwatch.Elapsed.TotalSeconds;
             _saveFailed = false;
+            return true;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or JsonException or InvalidDataException)
         {
-            if (_saveFailed) return;
+            if (_saveFailed)
+            {
+                return false;
+            }
             _saveFailed = true;
-            DisplayLatestNotification($"Could not save your game: {exception.Message}");
+            ShowToast($"Could not save your game: {exception.Message}");
+            return false;
         }
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
+        if (_inGame && !SaveGame()
+            && MessageBox.Show(
+                "Your game could not be saved. Close Signaller anyway and lose unsaved changes?",
+                "Signaller — Save error",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            return;
+        }
+
         _windowLifetime.Cancel();
-        if (_inGame) SaveGame();
         _timer.Stop();
         _updateCheckTimer.Stop();
         _updaterCleanupTimer.Stop();
@@ -894,6 +947,11 @@ public partial class MainWindow : Window
         var message = messages.LastOrDefault() ?? fallback;
         if (message is null) return;
 
+        ShowToast(message);
+    }
+
+    private void ShowToast(string message)
+    {
         StatusToast.Text = message;
         ToastBorder.Visibility = Visibility.Visible;
         if (_toastTimeout is not null) _toastTimeout.Stop();

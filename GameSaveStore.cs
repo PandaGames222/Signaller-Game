@@ -42,7 +42,18 @@ internal static class GameSaveStore
 
         var path = SavePathFor(style);
         var temporaryPath = $"{path}.{Guid.NewGuid():N}.tmp";
-        File.WriteAllText(temporaryPath, JsonSerializer.Serialize(data, JsonOptions));
+        var contents = JsonSerializer.SerializeToUtf8Bytes(data, JsonOptions);
+        using (var stream = new FileStream(
+            temporaryPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            FileOptions.WriteThrough))
+        {
+            stream.Write(contents);
+            stream.Flush(flushToDisk: true);
+        }
         File.Move(temporaryPath, path, overwrite: true);
     }
 
