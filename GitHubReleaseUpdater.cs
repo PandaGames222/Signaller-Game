@@ -14,8 +14,16 @@ internal sealed class GitHubReleaseUpdater : IDisposable
 {
     private const string ReleaseApiUrl =
         "https://api.github.com/repos/PandaGames222/Signaller-Game/releases/latest";
-    private static readonly string DownloadDirectory = Path.Combine(
-        Path.GetTempPath(), "Signaller", "updates");
+    private static string DownloadDirectory
+    {
+        get
+        {
+            var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(localApplicationData))
+                throw new InvalidOperationException("The Signaller update directory could not be determined.");
+            return Path.Combine(localApplicationData, "Signaller", "updates");
+        }
+    }
     private readonly HttpClient _client = new()
     {
         Timeout = TimeSpan.FromMinutes(30)

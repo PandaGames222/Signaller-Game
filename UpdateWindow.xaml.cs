@@ -50,16 +50,20 @@ public partial class UpdateWindow : Window
                 _request,
                 progress,
                 CancellationToken.None);
+            if (!File.Exists(installerPath))
+                throw new FileNotFoundException("The downloaded Signaller installer could not be found.", installerPath);
 
             StatusText.Text = "Installing Signaller. Your saved game is safe.";
             UpdateProgress.IsIndeterminate = true;
+            var installerDirectory = Path.GetDirectoryName(installerPath);
+            if (string.IsNullOrWhiteSpace(installerDirectory) || !Directory.Exists(installerDirectory))
+                throw new DirectoryNotFoundException("The downloaded Signaller installer directory is unavailable.");
             var installer = Process.Start(new ProcessStartInfo
             {
                 FileName = installerPath,
                 Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS",
-                UseShellExecute = true,
-                WorkingDirectory = Path.GetDirectoryName(installerPath)
-                    ?? throw new InvalidOperationException("The update directory could not be determined.")
+                UseShellExecute = false,
+                WorkingDirectory = installerDirectory
             }) ?? throw new InvalidOperationException("The Signaller installer could not be started.");
             await installer.WaitForExitAsync();
             if (installer.ExitCode != 0)

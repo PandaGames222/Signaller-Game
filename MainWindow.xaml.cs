@@ -61,7 +61,7 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning);
         }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.7.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.7.1";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
         _loadingSettings = true;
         EntrySoundCheckBox.IsChecked = _soundEnabled;
