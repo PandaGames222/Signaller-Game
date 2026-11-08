@@ -15,6 +15,9 @@ const canvasHint = document.getElementById("canvas-hint");
 const modeTitle = document.getElementById("mode-title");
 const modeEyebrow = document.getElementById("mode-eyebrow");
 const mapSubtitle = document.getElementById("map-subtitle");
+const updateButton = document.getElementById("update-button");
+const appVersionDisplay = document.getElementById("app-version");
+const footerVersionDisplay = document.getElementById("footer-version");
 
 const WORLD = { width: 1000, height: 600 };
 const GRID_SIZE = 40;
@@ -465,6 +468,60 @@ function showToast(message) {
   }, 2100);
 }
 
+function updateUpdateButton(status) {
+  updateButton.classList.remove("ready");
+  updateButton.disabled = false;
+
+  if (status.status === "checking") {
+    updateButton.textContent = "CHECKING…";
+    updateButton.disabled = true;
+    return;
+  }
+  if (status.status === "downloading") {
+    const progress = Number.isFinite(status.percent) ? ` ${Math.floor(status.percent)}%` : "";
+    updateButton.textContent = `UPDATING${progress}`;
+    updateButton.disabled = true;
+    return;
+  }
+  if (status.status === "downloaded") {
+    updateButton.textContent = `RESTART TO UPDATE · ${status.version}`;
+    updateButton.classList.add("ready");
+    return;
+  }
+  if (status.status === "current") {
+    updateButton.textContent = "UP TO DATE";
+    updateButton.disabled = true;
+    window.setTimeout(() => {
+      updateButton.textContent = "CHECK UPDATES";
+      updateButton.disabled = false;
+    }, 4000);
+    return;
+  }
+  if (status.status === "error") {
+    updateButton.textContent = "UPDATE CHECK FAILED";
+    updateButton.title = status.message || "Could not check for updates.";
+    window.setTimeout(() => {
+      updateButton.textContent = "CHECK UPDATES";
+      updateButton.title = "Check for app updates";
+      updateButton.disabled = false;
+    }, 5000);
+    showToast(`Could not check for updates: ${status.message || "Please try again later."}`);
+    return;
+  }
+  if (status.status === "development") {
+    updateButton.textContent = "INSTALLED APP ONLY";
+    updateButton.title = "Install the Windows app to enable automatic updates.";
+    updateButton.disabled = true;
+    return;
+  }
+  if (status.status === "unsupported") {
+    updateButton.textContent = "WINDOWS UPDATES ONLY";
+    updateButton.disabled = true;
+    return;
+  }
+  updateButton.textContent = "CHECK UPDATES";
+}
+
 function renderBuildList() {
   buildList.replaceChildren();
   for (const item of BUILD_ITEMS) {
@@ -661,6 +718,17 @@ pauseButton.addEventListener("click", () => {
   pauseButton.setAttribute("aria-label", state.paused ? "Resume simulation" : "Pause simulation");
   showToast(state.paused ? "Simulation paused." : "Simulation resumed.");
 });
+updateButton.addEventListener("click", async () => {
+  if (updateButton.classList.contains("ready")) {
+    const started = await window.signallerApp.installUpdate();
+    if (!started) showToast("The downloaded update cannot be installed in this build.");
+    return;
+  }
+
+  updateUpdateButton({ status: "checking" });
+  const result = await window.signallerApp.checkForUpdates();
+  if (result.status !== "checking") updateUpdateButton(result);
+});
 demolishButton.addEventListener("click", () => {
   state.demolishMode = !state.demolishMode;
   demolishButton.classList.toggle("active", state.demolishMode);
@@ -682,6 +750,16 @@ canvas.addEventListener("pointerleave", () => {
   if (state.mode === "editor") draw();
 });
 window.addEventListener("resize", resizeCanvas);
+
+if (window.signallerApp) {
+  const version = window.signallerApp.getVersion();
+  appVersionDisplay.textContent = `VERSION ${version}`;
+  footerVersionDisplay.textContent = `v${version}`;
+  window.signallerApp.onUpdateStatus(updateUpdateButton);
+} else {
+  appVersionDisplay.textContent = "DESKTOP APP";
+  updateUpdateButton({ status: "development" });
+}
 
 function animate(timestamp) {
   const deltaSeconds = state.lastFrame
