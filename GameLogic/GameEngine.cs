@@ -133,7 +133,7 @@ public sealed class GameEngine
     public const double WorldWidth = 1800;
     public const double WorldHeight = 1100;
     public const double GridSize = 40;
-    public const int SaveVersion = 4;
+    public const int SaveVersion = 5;
     public const int StartingBalance = 5000;
     public const double SafetyDistance = 36;
     public const double SimulationClockRate = 3;
@@ -183,24 +183,61 @@ public sealed class GameEngine
 
     private static readonly TrackPoint[] AirportRoutePoints =
     [
-        .. MainRoutePoints.Take(7),
-        new(1410, 260),
-        new(1600, 180)
+        new(20, 250),
+        new(180, 300),
+        new(330, 360),
+        new(500, 430),
+        new(620, 540),
+        new(850, 540),
+        new(1000, 520),
+        new(1110, 460),
+        new(1200, 350),
+        new(1320, 240),
+        new(1510, 160),
+        new(1760, 100)
     ];
 
     private static readonly TrackPoint[] HarborRoutePoints =
     [
-        .. MainRoutePoints.Take(7),
-        new(1400, 570),
-        new(1570, 730),
-        new(1650, 900)
+        new(20, 850),
+        new(180, 800),
+        new(340, 720),
+        new(500, 650),
+        new(620, 620),
+        new(850, 620),
+        new(1000, 670),
+        new(1150, 760),
+        new(1300, 850),
+        new(1510, 940),
+        new(1760, 1000)
     ];
+
+    private static readonly TrackPoint[] RegularMainRoutePoints = SmoothRoute(
+    [
+        new(20, 530), new(240, 530), new(380, 500), new(600, 500), new(850, 500),
+        new(1000, 480), new(1190, 420), new(1450, 420), new(1760, 460)
+    ]);
+    private static readonly TrackPoint[] RegularNorthRoutePoints = SmoothRoute(
+    [
+        new(150, 20), new(260, 120), new(380, 250), new(500, 370), new(620, 460),
+        new(850, 460), new(980, 410), new(1070, 330), new(1130, 220), new(1130, 50)
+    ]);
+    private static readonly TrackPoint[] RegularSouthRoutePoints = SmoothRoute(
+    [
+        new(20, 1080), new(180, 960), new(320, 800), new(500, 650), new(620, 580),
+        new(850, 580), new(980, 630), new(1070, 740), new(1100, 900), new(1100, 1080)
+    ]);
+    private static readonly TrackPoint[] RegularAirportRoutePoints = SmoothRoute(AirportRoutePoints);
+    private static readonly TrackPoint[] RegularHarborRoutePoints = SmoothRoute(HarborRoutePoints);
 
     private static readonly RouteMetrics MainMetrics = MeasureRoute(MainRoutePoints);
     private static readonly RouteMetrics NorthMetrics = MeasureRoute(NorthRoutePoints);
     private static readonly RouteMetrics SouthMetrics = MeasureRoute(SouthRoutePoints);
-    private static readonly RouteMetrics AirportMetrics = MeasureRoute(AirportRoutePoints);
-    private static readonly RouteMetrics HarborMetrics = MeasureRoute(HarborRoutePoints);
+    private static readonly RouteMetrics RegularMainMetrics = MeasureRoute(RegularMainRoutePoints);
+    private static readonly RouteMetrics RegularNorthMetrics = MeasureRoute(RegularNorthRoutePoints);
+    private static readonly RouteMetrics RegularSouthMetrics = MeasureRoute(RegularSouthRoutePoints);
+    private static readonly RouteMetrics RegularAirportMetrics = MeasureRoute(RegularAirportRoutePoints);
+    private static readonly RouteMetrics RegularHarborMetrics = MeasureRoute(RegularHarborRoutePoints);
     private static readonly string[] RouteIds = ["main", "north", "south", "airport", "harbor"];
     private static readonly string[] ServiceNames =
     [
@@ -241,11 +278,11 @@ public sealed class GameEngine
         _routes.AddRange(Style == GameStyle.Regular
             ?
             [
-                new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", MainRoutePoints),
-                new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", NorthRoutePoints),
-                new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", SouthRoutePoints),
-                new("airport", "AIRPORT LINE", "Greyfield Airport", "AIRPORT EXIT", AirportRoutePoints),
-                new("harbor", "HARBOR LINE", "East Harbor", "HARBOR EXIT", HarborRoutePoints)
+                new("main", "GREYFIELD MAIN", "Portside", "EAST EXIT", RegularMainRoutePoints, "WEST DEPOT"),
+                new("north", "NORTH QUAY", "North Quay", "NORTH EXIT", RegularNorthRoutePoints, "NORTH GATE"),
+                new("south", "CANAL PARK", "Canal Park", "SOUTH EXIT", RegularSouthRoutePoints, "SOUTH DEPOT"),
+                new("airport", "AIRPORT LINE", "Greyfield Airport", "AIRPORT EXIT", RegularAirportRoutePoints, "AIRPORT LINK"),
+                new("harbor", "HARBOR LINE", "East Harbor", "HARBOR EXIT", RegularHarborRoutePoints, "HARBOR YARD")
             ]
             :
             [
@@ -262,41 +299,44 @@ public sealed class GameEngine
         };
         if (Style == GameStyle.Regular)
         {
-            _metrics.Add("airport", AirportMetrics);
-            _metrics.Add("harbor", HarborMetrics);
+            _metrics.Clear();
+            _metrics.Add("main", RegularMainMetrics);
+            _metrics.Add("north", RegularNorthMetrics);
+            _metrics.Add("south", RegularSouthMetrics);
+            _metrics.Add("airport", RegularAirportMetrics);
+            _metrics.Add("harbor", RegularHarborMetrics);
         }
-        TrackLength = MainMetrics.Total;
-        var centralDistance = MainMetrics.Starts[2] + 90;
+        TrackLength = RouteMetricsFor("main").Total;
         _stations = Style == GameStyle.Regular
             ? new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
             {
                 ["main"] =
                 [
-                    new("Greyfield Central", "Platform 1", centralDistance, "central"),
-                    new("Riverside", "Platform 6", MainMetrics.Starts[6] + 70),
-                    new("East Market", "Platform 7", MainMetrics.Starts[7] + 105)
+                    new("Greyfield Central", "Platform 1", DistanceAlongTrack(RegularMainRoutePoints, 720, 500), "central"),
+                    new("Riverside", "Platform 6", DistanceAlongTrack(RegularMainRoutePoints, 1290, 420)),
+                    new("East Market", "Platform 7", DistanceAlongTrack(RegularMainRoutePoints, 1600, 440))
                 ],
                 ["north"] =
                 [
-                    new("Greyfield Central", "Platform 2", centralDistance, "central"),
-                    new("North Junction", "Platform 8", NorthMetrics.Starts[4] + 100),
-                    new("North Quay", "Platform 9", NorthMetrics.Starts[5] + 130)
+                    new("Greyfield Central", "Platform 2", DistanceAlongTrack(RegularNorthRoutePoints, 720, 460), "central"),
+                    new("North Junction", "Platform 8", DistanceAlongTrack(RegularNorthRoutePoints, 1000, 390)),
+                    new("North Quay", "Platform 9", DistanceAlongTrack(RegularNorthRoutePoints, 1130, 120))
                 ],
                 ["south"] =
                 [
-                    new("Greyfield Central", "Platform 3", centralDistance, "central"),
-                    new("Market Cross", "Platform 10", SouthMetrics.Starts[4] + 100),
-                    new("Canal Park", "Platform 11", SouthMetrics.Starts[5] + 100)
+                    new("Greyfield Central", "Platform 3", DistanceAlongTrack(RegularSouthRoutePoints, 720, 580), "central"),
+                    new("Market Cross", "Platform 10", DistanceAlongTrack(RegularSouthRoutePoints, 1030, 690)),
+                    new("Canal Park", "Platform 11", DistanceAlongTrack(RegularSouthRoutePoints, 1100, 990))
                 ],
                 ["airport"] =
                 [
-                    new("Greyfield Central", "Platform 4", centralDistance, "central"),
-                    new("Airport Parkway", "Platform 12", AirportMetrics.Starts[7] + 110)
+                    new("Greyfield Central", "Platform 4", DistanceAlongTrack(RegularAirportRoutePoints, 720, 540), "central"),
+                    new("Airport Parkway", "Platform 12", DistanceAlongTrack(RegularAirportRoutePoints, 1400, 205))
                 ],
                 ["harbor"] =
                 [
-                    new("Greyfield Central", "Platform 5", centralDistance, "central"),
-                    new("Harbor Point", "Platform 13", HarborMetrics.Starts[7] + 105)
+                    new("Greyfield Central", "Platform 5", DistanceAlongTrack(RegularHarborRoutePoints, 720, 620), "central"),
+                    new("Harbor Point", "Platform 13", DistanceAlongTrack(RegularHarborRoutePoints, 1370, 880))
                 ]
             }
             : new Dictionary<string, List<StationInfo>>(StringComparer.Ordinal)
@@ -310,20 +350,15 @@ public sealed class GameEngine
             ["south"] = [new("Canal Park", "Platform 4", SouthMetrics.Starts[5] + 100)]
         };
 
-        _signals.AddRange(
-        [
-            new() { Id = "S01", Distance = 105, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
-            new() { Id = "S02", Distance = 340, Aspect = SignalAspect.Green, Side = 1, RouteId = "common" },
-            new() { Id = "S03", Distance = 650, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
-            new() { Id = "S04", Distance = 1020, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
-            new() { Id = "S05", Distance = 1380, Aspect = SignalAspect.Green, Side = 1, RouteId = "main" },
-            new() { Id = "S06", Distance = 1770, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
-            new() { Id = "S07", Distance = NorthMetrics.Starts[5] + 50, Aspect = SignalAspect.Green, Side = -1, RouteId = "north" },
-            new() { Id = "S08", Distance = NorthMetrics.Starts[5] + 200, Aspect = SignalAspect.Green, Side = 1, RouteId = "north" },
-            new() { Id = "S09", Distance = SouthMetrics.Starts[5] + 45, Aspect = SignalAspect.Green, Side = 1, RouteId = "south" },
-            new() { Id = "S10", Distance = SouthMetrics.Starts[5] + 180, Aspect = SignalAspect.Green, Side = -1, RouteId = "south" }
-        ]);
-        if (Style == GameStyle.Regular) AddStationSignals();
+        if (Style == GameStyle.Regular)
+        {
+            AddRegularSignals();
+            AddStationSignals();
+        }
+        else
+        {
+            AddOriginalSignals();
+        }
 
         if (save is null)
             CreateInitialFleet();
@@ -481,6 +516,21 @@ public sealed class GameEngine
         return true;
     }
 
+    public SignalAspect DisplayedAspect(Signal signal)
+    {
+        if (Style != GameStyle.Regular || signal.RouteId == "common")
+            return signal.Aspect;
+
+        var nextSignalDistance = Signals
+            .Where(candidate => candidate.RouteId == signal.RouteId && candidate.Distance > signal.Distance)
+            .Select(candidate => candidate.Distance)
+            .DefaultIfEmpty(RouteMetricsFor(signal.RouteId).Total)
+            .Min();
+        var occupied = Trains.Any(train => train.RouteId == signal.RouteId
+            && train.Distance > signal.Distance && train.Distance < nextSignalDistance);
+        return occupied ? SignalAspect.Red : signal.Aspect;
+    }
+
     public bool ToggleSignal(string id)
     {
         var signal = Signals.FirstOrDefault(signal => signal.Id == id);
@@ -631,15 +681,9 @@ public sealed class GameEngine
 
     private void AddStationSignals()
     {
-        var stationGroups = AllStations.GroupBy(item =>
-            string.IsNullOrWhiteSpace(item.Station.GroupId)
-                ? $"{item.RouteId}/{item.Station.Name}"
-                : item.Station.GroupId);
         var signalNumber = 1;
-        foreach (var group in stationGroups)
+        foreach (var (routeId, station) in AllStations)
         {
-            var (routeId, station) = group.First();
-            var signalRouteId = group.Key == "central" ? "common" : routeId;
             var beforeDistance = station.Distance - 55;
             var afterDistance = station.Distance + 55;
             if (beforeDistance <= 0 || afterDistance >= RouteMetricsFor(routeId).Total) continue;
@@ -647,21 +691,58 @@ public sealed class GameEngine
             _signals.Add(new Signal
             {
                 Id = $"ST{signalNumber:D2}A",
-                RouteId = signalRouteId,
+                RouteId = routeId,
                 Distance = beforeDistance,
-                Side = signalNumber % 2 == 0 ? 1 : -1,
+                Side = -1,
                 Aspect = SignalAspect.Green
             });
             _signals.Add(new Signal
             {
                 Id = $"ST{signalNumber:D2}D",
-                RouteId = signalRouteId,
+                RouteId = routeId,
                 Distance = afterDistance,
-                Side = signalNumber % 2 == 0 ? -1 : 1,
+                Side = 1,
                 Aspect = SignalAspect.Green
             });
             signalNumber++;
         }
+    }
+
+    private void AddRegularSignals()
+    {
+        var signalNumber = 1;
+        foreach (var route in Routes)
+        {
+            var total = RouteMetricsFor(route.Id).Total;
+            for (var distance = 130d; distance < total - 90; distance += 240)
+            {
+                _signals.Add(new Signal
+                {
+                    Id = $"R{signalNumber++:D2}",
+                    RouteId = route.Id,
+                    Distance = distance,
+                    Side = signalNumber % 2 == 0 ? -1 : 1,
+                    Aspect = SignalAspect.Green
+                });
+            }
+        }
+    }
+
+    private void AddOriginalSignals()
+    {
+        _signals.AddRange(
+        [
+            new() { Id = "S01", Distance = 105, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
+            new() { Id = "S02", Distance = 340, Aspect = SignalAspect.Green, Side = 1, RouteId = "common" },
+            new() { Id = "S03", Distance = 650, Aspect = SignalAspect.Green, Side = -1, RouteId = "common" },
+            new() { Id = "S04", Distance = 1020, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
+            new() { Id = "S05", Distance = 1380, Aspect = SignalAspect.Green, Side = 1, RouteId = "main" },
+            new() { Id = "S06", Distance = 1770, Aspect = SignalAspect.Green, Side = -1, RouteId = "main" },
+            new() { Id = "S07", Distance = NorthMetrics.Starts[5] + 50, Aspect = SignalAspect.Green, Side = -1, RouteId = "north" },
+            new() { Id = "S08", Distance = NorthMetrics.Starts[5] + 200, Aspect = SignalAspect.Green, Side = 1, RouteId = "north" },
+            new() { Id = "S09", Distance = SouthMetrics.Starts[5] + 45, Aspect = SignalAspect.Green, Side = 1, RouteId = "south" },
+            new() { Id = "S10", Distance = SouthMetrics.Starts[5] + 180, Aspect = SignalAspect.Green, Side = -1, RouteId = "south" }
+        ]);
     }
 
     private void CreateInitialFleet()
@@ -1154,7 +1235,7 @@ public sealed class GameEngine
             .Where(signal => IsSignalOnTrainRoute(signal, train))
             .Select(signal => new
             {
-                signal.Aspect,
+                Aspect = DisplayedAspect(signal),
                 Distance = signal.Distance - train.Distance
             })
             .Where(item => item.Distance > 0)
@@ -1166,7 +1247,7 @@ public sealed class GameEngine
     private Obstacle? FindNextObstacle(TrainService train)
     {
         return Signals
-            .Where(signal => signal.Aspect == SignalAspect.Red && IsSignalOnTrainRoute(signal, train))
+            .Where(signal => DisplayedAspect(signal) == SignalAspect.Red && IsSignalOnTrainRoute(signal, train))
             .Select(signal => new Obstacle(signal.Distance - train.Distance, signal.Id))
             .Where(obstacle => obstacle.Distance > 0)
             .OrderBy(obstacle => obstacle.Distance)
@@ -1246,6 +1327,8 @@ public sealed class GameEngine
         {
             if (signalState is null)
                 throw new InvalidDataException("The saved game contains an invalid signal.");
+            if (save.Style == GameStyle.Regular && save.Version < 5)
+                continue;
             var id = save.Version == 1
                 ? signalState.Id switch { "S1" => "S02", "S2" => "S05", _ => signalState.Id }
                 : signalState.Id;
@@ -1260,9 +1343,27 @@ public sealed class GameEngine
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var trainState in trainStates)
         {
-            var distance = trainState is not null && save.Version == 1 && double.IsFinite(trainState.Distance)
-                ? Math.Clamp(trainState.Distance, 0, MainMetrics.Total)
-                : trainState?.Distance ?? double.NaN;
+            var legacyRegularSave = save.Style == GameStyle.Regular && save.Version < 5;
+            var distance = trainState?.Distance ?? double.NaN;
+            if (trainState is not null && double.IsFinite(distance))
+            {
+                if (save.Version == 1)
+                    distance = Math.Clamp(distance, 0, MainMetrics.Total);
+                else if (save.Style == GameStyle.Regular && save.Version < 5
+                    && _metrics.TryGetValue(trainState.RouteId, out var updatedMetrics))
+                {
+                    var previousMetrics = trainState.RouteId switch
+                    {
+                        "north" => NorthMetrics,
+                        "south" => SouthMetrics,
+                        "airport" => MeasureRoute(AirportRoutePoints),
+                        "harbor" => MeasureRoute(HarborRoutePoints),
+                        _ => MainMetrics
+                    };
+                    distance = Math.Clamp(distance / previousMetrics.Total * updatedMetrics.Total,
+                        0, updatedMetrics.Total);
+                }
+            }
             if (trainState is null || string.IsNullOrWhiteSpace(trainState.Status)
                 || string.IsNullOrWhiteSpace(trainState.Id) || !ids.Add(trainState.Id)
                 || string.IsNullOrWhiteSpace(trainState.Headcode)
@@ -1273,7 +1374,7 @@ public sealed class GameEngine
                 || !double.IsFinite(trainState.Speed) || trainState.Speed is < 10 or > 120
                 || !double.IsFinite(trainState.LatencySeconds)
                 || !double.IsFinite(trainState.StationDwellSeconds) || trainState.StationDwellSeconds < 0
-                || (trainState.StoppedAtStationDistance is { } stationDistance
+                || (!legacyRegularSave && trainState.StoppedAtStationDistance is { } stationDistance
                     && (!trainState.Stopped
                         || !double.IsFinite(stationDistance)
                         || Math.Abs(distance - stationDistance) > 0.01
@@ -1289,10 +1390,10 @@ public sealed class GameEngine
                 Speed = trainState.Speed,
                 Distance = distance,
                 LatencySeconds = trainState.LatencySeconds,
-                Stopped = trainState.Stopped,
-                Status = trainState.Status,
-                StationDwellSeconds = trainState.StationDwellSeconds,
-                StoppedAtStationDistance = trainState.StoppedAtStationDistance
+                Stopped = legacyRegularSave ? false : trainState.Stopped,
+                Status = legacyRegularSave ? "In service after network update" : trainState.Status,
+                StationDwellSeconds = legacyRegularSave ? 0 : trainState.StationDwellSeconds,
+                StoppedAtStationDistance = legacyRegularSave ? null : trainState.StoppedAtStationDistance
             });
         }
 
@@ -1461,6 +1562,63 @@ public sealed class GameEngine
         }
 
         return new(lengths, starts, total);
+    }
+
+    private static double DistanceAlongTrack(IReadOnlyList<TrackPoint> points, double x, double y)
+    {
+        var bestDistanceSquared = double.PositiveInfinity;
+        var bestDistanceAlong = 0d;
+        var distanceAlong = 0d;
+        for (var index = 0; index < points.Count - 1; index++)
+        {
+            var start = points[index];
+            var end = points[index + 1];
+            var dx = end.X - start.X;
+            var dy = end.Y - start.Y;
+            var lengthSquared = dx * dx + dy * dy;
+            var progress = Math.Clamp(((x - start.X) * dx + (y - start.Y) * dy) / lengthSquared, 0, 1);
+            var nearestX = start.X + dx * progress;
+            var nearestY = start.Y + dy * progress;
+            var offsetX = x - nearestX;
+            var offsetY = y - nearestY;
+            var distanceSquared = offsetX * offsetX + offsetY * offsetY;
+            var segmentLength = Math.Sqrt(lengthSquared);
+            if (distanceSquared < bestDistanceSquared)
+            {
+                bestDistanceSquared = distanceSquared;
+                bestDistanceAlong = distanceAlong + segmentLength * progress;
+            }
+            distanceAlong += segmentLength;
+        }
+        return bestDistanceAlong;
+    }
+
+    private static TrackPoint[] SmoothRoute(IReadOnlyList<TrackPoint> controlPoints)
+    {
+        const int subdivisions = 8;
+        var result = new List<TrackPoint>((controlPoints.Count - 1) * subdivisions + 1);
+        for (var index = 0; index < controlPoints.Count - 1; index++)
+        {
+            var p0 = controlPoints[Math.Max(0, index - 1)];
+            var p1 = controlPoints[index];
+            var p2 = controlPoints[index + 1];
+            var p3 = controlPoints[Math.Min(controlPoints.Count - 1, index + 2)];
+            for (var sample = 0; sample < subdivisions; sample++)
+            {
+                var t = sample / (double)subdivisions;
+                var t2 = t * t;
+                var t3 = t2 * t;
+                result.Add(new TrackPoint(
+                    0.5 * ((2 * p1.X) + (-p0.X + p2.X) * t
+                        + (2 * p0.X - 5 * p1.X + 4 * p2.X - p3.X) * t2
+                        + (-p0.X + 3 * p1.X - 3 * p2.X + p3.X) * t3),
+                    0.5 * ((2 * p1.Y) + (-p0.Y + p2.Y) * t
+                        + (2 * p0.Y - 5 * p1.Y + 4 * p2.Y - p3.Y) * t2
+                        + (-p0.Y + 3 * p1.Y - 3 * p2.Y + p3.Y) * t3)));
+            }
+        }
+        result.Add(controlPoints[^1]);
+        return result.ToArray();
     }
 
     private readonly record struct RouteMetrics(double[] Lengths, double[] Starts, double Total);

@@ -7,6 +7,7 @@ var tests = new (string Name, Action Run)[]
     ("train remains stopped at a red signal until it is cleared", RedSignalKeepsTrainStopped),
     ("automatic routing serves all three terminal branches", AutomaticRoutingServesThreeTerminals),
     ("regular mode has junctions, central platforms, side stations, and station signals", RegularModeBuildsExpandedNetwork),
+    ("regular platforms use separate tracks and occupied blocks display red", RegularPlatformsAndOccupiedBlocks),
     ("regular trains stop, open doors, wait safely, and resume at stations", RegularTrainsServeStations),
     ("trains enter the zone and trigger an arrival notification", TrainEntryIsReported),
     ("only safe signal and destination crossings pay", SafePassagesEarnMoney),
@@ -146,6 +147,46 @@ static void RegularModeBuildsExpandedNetwork()
     }
 }
 
+static void RegularPlatformsAndOccupiedBlocks()
+{
+    var engine = new GameEngine(style: GameStyle.Regular);
+    Check(engine.Routes.Select(route => route.EntranceName).Distinct().Count() == engine.Routes.Count,
+        "Each branch should have its own entry point.");
+
+    var centralTracks = engine.AllStations
+        .Where(item => item.Station.GroupId == "central")
+        .Select(item => engine.PositionAt(item.RouteId, item.Station.Distance))
+        .ToArray();
+    for (var first = 0; first < centralTracks.Length; first++)
+    for (var second = first + 1; second < centralTracks.Length; second++)
+    {
+        var dx = centralTracks[first].X - centralTracks[second].X;
+        var dy = centralTracks[first].Y - centralTracks[second].Y;
+        Check(dx * dx + dy * dy > 20 * 20,
+            "Each central platform must occupy its own route track.");
+    }
+
+    var mainSignal = engine.Signals
+        .Where(signal => signal.RouteId == "main")
+        .OrderBy(signal => signal.Distance)
+        .First();
+    var occupiedTrain = engine.Save().Trains!.First(train => train.RouteId == "main") with
+    {
+        Distance = mainSignal.Distance + 12,
+        Id = "TR98",
+        Status = "In service"
+    };
+    var occupiedSave = engine.Save() with
+    {
+        Train = occupiedTrain,
+        Trains = [occupiedTrain]
+    };
+    var occupiedEngine = new GameEngine(occupiedSave, GameStyle.Regular);
+    var restoredSignal = occupiedEngine.Signals.Single(signal => signal.Id == mainSignal.Id);
+    Equal(SignalAspect.Green, restoredSignal.Aspect);
+    Equal(SignalAspect.Red, occupiedEngine.DisplayedAspect(restoredSignal));
+}
+
 static void RegularTrainsServeStations()
 {
     var engine = CreateSingleTrainEngine(GameStyle.Regular);
@@ -182,7 +223,7 @@ static void RegularTrainsServeStations()
     var heldStation = heldEngine.StationsForRoute(heldTrain.RouteId)
         .First(station => station.GroupId == "central");
     var departureSignal = heldEngine.Signals.Single(signal =>
-        signal.Id == "ST01D" && signal.RouteId == "common");
+        signal.Id == "ST01D" && signal.RouteId == heldTrain.RouteId);
     Check(heldEngine.SetSignalAspect(departureSignal.Id, SignalAspect.Red),
         "The station departure signal should be controllable.");
     RunUntilAtStation(heldEngine, heldTrain, heldStation, 30);

@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Signaller.GameLogic;
 using WpfPoint = System.Windows.Point;
@@ -36,6 +37,8 @@ public partial class MainWindow : Window
     private TrainService? _selectedTrain;
     private Signal? _selectedSignal;
     private double _lastDeskRefreshSeconds;
+    private readonly Dictionary<FrameworkElement, int> _motionVersions = [];
+    private int _lastDisplayedBalance = -1;
 
     public MainWindow(GameEngine engine)
     {
@@ -58,7 +61,7 @@ public partial class MainWindow : Window
                 MessageBoxImage.Warning);
         }
 
-        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.6.0";
+        FooterVersion.Text = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.7.0";
         VersionText.Text = $"VERSION {FooterVersion.Text}";
         _loadingSettings = true;
         EntrySoundCheckBox.IsChecked = _soundEnabled;
@@ -125,6 +128,9 @@ public partial class MainWindow : Window
 
     private void RefreshHud()
     {
+        if (_lastDisplayedBalance >= 0 && _lastDisplayedBalance != _engine.Balance)
+            PulseElement(BalanceText);
+        _lastDisplayedBalance = _engine.Balance;
         BalanceText.Text = _engine.FormattedBalance;
         IncomeText.Text = $"${_engine.IncomePerMinute:N0} / min";
         RouteCountText.Text = $"GREYFIELD CONTROL AREA  ·  {_engine.RouteCount} ROUTES";
@@ -140,9 +146,11 @@ public partial class MainWindow : Window
     private void ApplyMode()
     {
         var editor = _engine.Mode == GameMode.Editor;
+        var editorWasVisible = EditorPanel.Visibility == Visibility.Visible;
         SignallerModeButton.IsChecked = !editor;
         EditorModeButton.IsChecked = editor;
         EditorPanel.Visibility = editor ? Visibility.Visible : Visibility.Collapsed;
+        if (editor && !editorWasVisible) AnimateElementIn(EditorPanel, -14, 0);
         EditorColumn.Width = editor ? new GridLength(252) : new GridLength(0);
         ModeEyebrow.Text = editor ? "NETWORK EXPANSION" : "NETWORK OPERATIONS";
         ModeTitle.Text = editor ? "Network editor"
@@ -151,7 +159,9 @@ public partial class MainWindow : Window
             : _engine.Style == GameStyle.Regular ? "LIVE OPERATIONS BOARD" : "SIGNALLING DIAGRAM";
         CanvasHint.Text = editor
             ? "CONNECT TRACK FROM DEPOT TO STATION  ·  R TO ROTATE  ·  DEMOLISH FOR A 50% REFUND"
-            : "CLICK A TRAIN FOR SERVICE DETAILS  ·  SELECT A SIGNAL TO SET ITS ASPECT";
+            : _engine.Style == GameStyle.Regular
+                ? "CLICK TRAINS OR SIGNALS FOR DETAILS  ·  SCROLL TO ZOOM  ·  RIGHT-DRAG TO PAN"
+                : "CLICK A TRAIN FOR SERVICE DETAILS  ·  SELECT A SIGNAL TO SET ITS ASPECT";
         DemolishButton.Background = _engine.DemolishMode
             ? new SolidColorBrush(Color.FromRgb(54, 35, 38))
             : new SolidColorBrush(Color.FromRgb(25, 35, 45));
@@ -256,11 +266,16 @@ public partial class MainWindow : Window
 
     private void ShowMenuPanel(Grid panel)
     {
-        HomePanel.Visibility = Visibility.Collapsed;
-        ModeSelectionPanel.Visibility = Visibility.Collapsed;
-        SettingsPanel.Visibility = Visibility.Collapsed;
+        foreach (var otherPanel in new[] { HomePanel, ModeSelectionPanel, SettingsPanel })
+        {
+            if (!ReferenceEquals(otherPanel, panel))
+                AnimateElementOut(otherPanel, 0, -12);
+        }
+        var overlayWasHidden = MenuOverlay.Visibility != Visibility.Visible;
         panel.Visibility = Visibility.Visible;
         MenuOverlay.Visibility = Visibility.Visible;
+        if (overlayWasHidden) AnimateElementIn(MenuOverlay, 0, 0);
+        AnimateElementIn(panel, 0, 16);
         ModeNavigation.Visibility = Visibility.Collapsed;
     }
 
@@ -275,6 +290,7 @@ public partial class MainWindow : Window
         _modeLoadInProgress = true;
         GameLoadingText.Text = $"Loading {style} railway...";
         GameLoadingOverlay.Visibility = Visibility.Visible;
+        AnimateElementIn(GameLoadingOverlay, 0, 8);
         try
         {
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
@@ -298,13 +314,14 @@ public partial class MainWindow : Window
             if (style == GameStyle.Regular && _engine.Mode != GameMode.Signaller)
                 _engine.SetMode(GameMode.Signaller);
 
-            MenuOverlay.Visibility = Visibility.Collapsed;
+            AnimateElementOut(MenuOverlay, 0, -12);
             ModeNavigation.Visibility = Visibility.Visible;
+            AnimateElementIn(ModeNavigation, 0, -5);
             CloseDetails();
             ApplyMode();
             RefreshHud();
             RefreshRegularDesk();
-            GameLoadingOverlay.Visibility = Visibility.Collapsed;
+            AnimateElementOut(GameLoadingOverlay, 0, -6);
             await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             if (lifetimeToken.IsCancellationRequested) return;
             _lastTickSeconds = _stopwatch.Elapsed.TotalSeconds;
@@ -320,7 +337,7 @@ public partial class MainWindow : Window
             or JsonException or InvalidDataException or ArgumentException or InvalidOperationException)
         {
             _gameStarting = false;
-            GameLoadingOverlay.Visibility = Visibility.Collapsed;
+            AnimateElementOut(GameLoadingOverlay, 0, -6);
             ShowMenuPanel(ModeSelectionPanel);
             MessageBox.Show(
                 $"Could not load {style} mode:\n{exception.Message}",
@@ -393,7 +410,7 @@ public partial class MainWindow : Window
                 .Where(signal => signal.RouteId == route.Id
                     || signal.RouteId == "common")
                 .ToArray();
-            var affected = routeSignals.Any(signal => signal.Aspect == SignalAspect.Red);
+            var affected = routeSignals.Any(signal => _engine.DisplayedAspect(signal) == SignalAspect.Red);
             var trains = _engine.Trains.Where(train => train.RouteId == route.Id).ToArray();
             var card = new Border
             {
@@ -626,8 +643,14 @@ public partial class MainWindow : Window
 
     private void Railway_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (sender is not RailwaySurface railway || _engine.Mode != GameMode.Editor
-            || railway.MouseToWorld(e.GetPosition(railway)) is not { } point)
+        if (sender is not RailwaySurface railway) return;
+        if (railway.IsPanning)
+        {
+            railway.UpdatePan(e.GetPosition(railway));
+            e.Handled = true;
+            return;
+        }
+        if (_engine.Mode != GameMode.Editor || railway.MouseToWorld(e.GetPosition(railway)) is not { } point)
             return;
 
         _engine.SetPreview(point.X, point.Y);
@@ -638,6 +661,30 @@ public partial class MainWindow : Window
     {
         _engine.ClearPreview();
         if (sender is RailwaySurface railway) railway.InvalidateVisual();
+    }
+
+    private void Railway_PreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not RailwaySurface railway
+            || (e.ChangedButton != System.Windows.Input.MouseButton.Right
+                && e.ChangedButton != System.Windows.Input.MouseButton.Middle))
+            return;
+        railway.BeginPan(e.GetPosition(railway));
+        e.Handled = true;
+    }
+
+    private void Railway_PreviewMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not RailwaySurface railway || !railway.IsPanning) return;
+        railway.EndPan();
+        e.Handled = true;
+    }
+
+    private void Railway_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (sender is not RailwaySurface railway) return;
+        railway.ZoomAt(e.GetPosition(railway), e.Delta);
+        e.Handled = true;
     }
 
     private void RotateButton_Click(object sender, RoutedEventArgs e)
@@ -694,14 +741,16 @@ public partial class MainWindow : Window
         RefreshSignalDetails();
         DisplayLatestNotification();
         Railway.InvalidateVisual();
+        RegularRailway.InvalidateVisual();
     }
 
     private void OpenSignalDetails(Signal signal)
     {
         _selectedSignal = signal;
         _selectedTrain = null;
-        TrainInfoPanel.Visibility = Visibility.Collapsed;
+        AnimateElementOut(TrainInfoPanel, 16, 0);
         SignalControlPanel.Visibility = Visibility.Visible;
+        AnimateElementIn(SignalControlPanel, 16, 0);
         RefreshSignalDetails();
     }
 
@@ -709,15 +758,16 @@ public partial class MainWindow : Window
     {
         if (_selectedSignal is null) return;
         SignalInfoId.Text = _selectedSignal.Id;
-        SignalInfoAspect.Text = $"CURRENT ASPECT · {_selectedSignal.Aspect.ToString().ToUpperInvariant()}";
+        SignalInfoAspect.Text = $"CURRENT ASPECT · {_engine.DisplayedAspect(_selectedSignal).ToString().ToUpperInvariant()}";
     }
 
     private void OpenTrainDetails(TrainService train)
     {
         _selectedTrain = train;
         _selectedSignal = null;
-        SignalControlPanel.Visibility = Visibility.Collapsed;
+        AnimateElementOut(SignalControlPanel, 16, 0);
         TrainInfoPanel.Visibility = Visibility.Visible;
+        AnimateElementIn(TrainInfoPanel, 16, 0);
         RefreshTrainDetails();
     }
 
@@ -751,8 +801,8 @@ public partial class MainWindow : Window
     {
         _selectedTrain = null;
         _selectedSignal = null;
-        TrainInfoPanel.Visibility = Visibility.Collapsed;
-        SignalControlPanel.Visibility = Visibility.Collapsed;
+        AnimateElementOut(TrainInfoPanel, 16, 0);
+        AnimateElementOut(SignalControlPanel, 16, 0);
     }
 
     private void Engine_TrainEnteredZone(TrainService train)
@@ -975,17 +1025,121 @@ public partial class MainWindow : Window
     {
         StatusToast.Text = message;
         ToastBorder.Visibility = Visibility.Visible;
+        AnimateElementIn(ToastBorder, 0, -8);
         if (_toastTimeout is not null) _toastTimeout.Stop();
         _toastTimeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _toastTimeout.Tick += (_, _) =>
         {
             _toastTimeout.Stop();
-            ToastBorder.Visibility = Visibility.Collapsed;
+            AnimateElementOut(ToastBorder, 0, -5);
         };
         _toastTimeout.Start();
     }
 
     private DispatcherTimer? _toastTimeout;
+
+    private void AnimateElementIn(FrameworkElement element, double offsetX, double offsetY)
+    {
+        NextMotionVersion(element);
+        var transform = GetMotionTransform(element);
+        element.BeginAnimation(UIElement.OpacityProperty, null);
+        transform.BeginAnimation(TranslateTransform.XProperty, null);
+        transform.BeginAnimation(TranslateTransform.YProperty, null);
+        element.Opacity = 1;
+        transform.X = 0;
+        transform.Y = 0;
+        element.Visibility = Visibility.Visible;
+
+        element.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(190))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        });
+        transform.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(offsetX, 0, TimeSpan.FromMilliseconds(220))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        });
+        transform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(offsetY, 0, TimeSpan.FromMilliseconds(220))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop
+        });
+    }
+
+    private void AnimateElementOut(FrameworkElement element, double offsetX, double offsetY)
+    {
+        if (element.Visibility != Visibility.Visible) return;
+        var version = NextMotionVersion(element);
+        var transform = GetMotionTransform(element);
+        element.BeginAnimation(UIElement.OpacityProperty, null);
+        transform.BeginAnimation(TranslateTransform.XProperty, null);
+        transform.BeginAnimation(TranslateTransform.YProperty, null);
+        element.Opacity = 1;
+        transform.X = 0;
+        transform.Y = 0;
+
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(150))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+            FillBehavior = FillBehavior.Stop
+        };
+        fade.Completed += (_, _) =>
+        {
+            if (!_motionVersions.TryGetValue(element, out var currentVersion)
+                || currentVersion != version)
+                return;
+            element.BeginAnimation(UIElement.OpacityProperty, null);
+            transform.BeginAnimation(TranslateTransform.XProperty, null);
+            transform.BeginAnimation(TranslateTransform.YProperty, null);
+            element.Opacity = 1;
+            transform.X = 0;
+            transform.Y = 0;
+            element.Visibility = Visibility.Collapsed;
+        };
+        element.BeginAnimation(UIElement.OpacityProperty, fade);
+        transform.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(0, offsetX, fade.Duration.TimeSpan)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.Stop
+            });
+        transform.BeginAnimation(TranslateTransform.YProperty,
+            new DoubleAnimation(0, offsetY, fade.Duration.TimeSpan)
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.Stop
+            });
+    }
+
+    private void PulseElement(FrameworkElement element)
+    {
+        var transform = new ScaleTransform(1, 1);
+        element.RenderTransformOrigin = new WpfPoint(0.5, 0.5);
+        element.RenderTransform = transform;
+        var pulse = new DoubleAnimation(1, 1.12, TimeSpan.FromMilliseconds(110))
+        {
+            AutoReverse = true,
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        transform.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
+        transform.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
+    }
+
+    private int NextMotionVersion(FrameworkElement element)
+    {
+        var version = _motionVersions.GetValueOrDefault(element) + 1;
+        _motionVersions[element] = version;
+        return version;
+    }
+
+    private static TranslateTransform GetMotionTransform(FrameworkElement element)
+    {
+        if (element.RenderTransform is TranslateTransform transform) return transform;
+        transform = new TranslateTransform();
+        element.RenderTransform = transform;
+        return transform;
+    }
 
     private static double DistanceSquared(double x1, double y1, double x2, double y2)
     {
@@ -1007,20 +1161,73 @@ public sealed class RailwaySurface : FrameworkElement
     private static readonly Pen RailPen = CreateFrozenPen(Color.FromRgb(126, 145, 149), 1.7);
     private static readonly Pen EditorTrackBedPen = CreateFrozenPen(Color.FromRgb(39, 55, 62), 9);
     private static readonly Pen EditorTrackTiePen = CreateFrozenPen(Color.FromRgb(87, 105, 111), 1.2);
+    private double _zoom = 1;
+    private double _panX;
+    private double _panY;
+    private WpfPoint _panStart;
+    private double _panStartX;
+    private double _panStartY;
 
     public GameEngine? Engine { get; set; }
+    public bool IsPanning { get; private set; }
 
     public WpfPoint? MouseToWorld(WpfPoint position)
     {
         if (ActualWidth <= 0 || ActualHeight <= 0) return null;
-        var scale = Math.Min(ActualWidth / GameEngine.WorldWidth, ActualHeight / GameEngine.WorldHeight);
-        var offsetX = (ActualWidth - GameEngine.WorldWidth * scale) / 2;
-        var offsetY = (ActualHeight - GameEngine.WorldHeight * scale) / 2;
-        var x = (position.X - offsetX) / scale;
-        var y = (position.Y - offsetY) / scale;
+        var transform = CreateWorldTransform();
+        if (!transform.HasInverse) return null;
+        transform.Invert();
+        var world = transform.Transform(position);
+        var x = world.X;
+        var y = world.Y;
         if (x < 0 || x > GameEngine.WorldWidth || y < 0 || y > GameEngine.WorldHeight)
             return null;
         return new WpfPoint(x, y);
+    }
+
+    public void BeginPan(WpfPoint position)
+    {
+        IsPanning = true;
+        _panStart = position;
+        _panStartX = _panX;
+        _panStartY = _panY;
+        CaptureMouse();
+    }
+
+    public void UpdatePan(WpfPoint position)
+    {
+        if (!IsPanning) return;
+        _panX = _panStartX + position.X - _panStart.X;
+        _panY = _panStartY + position.Y - _panStart.Y;
+        InvalidateVisual();
+    }
+
+    public void EndPan()
+    {
+        IsPanning = false;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+    }
+
+    public void ZoomAt(WpfPoint position, int wheelDelta)
+    {
+        if (ActualWidth <= 0 || ActualHeight <= 0 || wheelDelta == 0) return;
+        var before = CreateWorldTransform();
+        before.Invert();
+        var worldAnchor = before.Transform(position);
+        _zoom = Math.Clamp(_zoom * (wheelDelta > 0 ? 1.15 : 1 / 1.15), 0.65, 4);
+        var after = CreateWorldTransform();
+        var projectedAnchor = after.Transform(worldAnchor);
+        _panX += position.X - projectedAnchor.X;
+        _panY += position.Y - projectedAnchor.Y;
+        InvalidateVisual();
+    }
+
+    private Matrix CreateWorldTransform()
+    {
+        var scale = Math.Min(ActualWidth / GameEngine.WorldWidth, ActualHeight / GameEngine.WorldHeight) * _zoom;
+        var offsetX = (ActualWidth - GameEngine.WorldWidth * scale) / 2 + _panX;
+        var offsetY = (ActualHeight - GameEngine.WorldHeight * scale) / 2 + _panY;
+        return new Matrix(scale, 0, 0, scale, offsetX, offsetY);
     }
 
     protected override void OnRender(DrawingContext drawingContext)
@@ -1029,10 +1236,7 @@ public sealed class RailwaySurface : FrameworkElement
         drawingContext.DrawRectangle(CanvasBrush, null, new Rect(RenderSize));
 
         if (Engine is null || ActualWidth <= 0 || ActualHeight <= 0) return;
-        var scale = Math.Min(ActualWidth / GameEngine.WorldWidth, ActualHeight / GameEngine.WorldHeight);
-        var offsetX = (ActualWidth - GameEngine.WorldWidth * scale) / 2;
-        var offsetY = (ActualHeight - GameEngine.WorldHeight * scale) / 2;
-        drawingContext.PushTransform(new MatrixTransform(new Matrix(scale, 0, 0, scale, offsetX, offsetY)));
+        drawingContext.PushTransform(new MatrixTransform(CreateWorldTransform()));
 
         DrawAmbientGrid(drawingContext);
         if (Engine.Mode == GameMode.Editor) DrawGrid(drawingContext);
@@ -1153,8 +1357,6 @@ public sealed class RailwaySurface : FrameworkElement
                 drawingContext.DrawText(CreateText(station.Platform.ToUpperInvariant(), 7,
                         Color.FromRgb(129, 146, 143), FontWeights.Normal),
                     new WpfPoint(position.X + 23, position.Y + 1));
-                drawingContext.DrawEllipse(
-                    new SolidColorBrush(Color.FromRgb(115, 224, 176)), null, marker, 2.5, 2.5);
             }
             return;
         }
@@ -1169,9 +1371,25 @@ public sealed class RailwaySurface : FrameworkElement
             var routeId = platforms[0].RouteId;
             var station = platforms[0].Station;
             var position = engine.PositionAt(routeId, station.Distance);
-            var marker = new WpfPoint(position.X, position.Y);
-            drawingContext.DrawLine(markerPen,
-                new WpfPoint(position.X - 11, position.Y), new WpfPoint(position.X + 11, position.Y));
+            foreach (var (platformRouteId, platformStation) in platforms)
+            {
+                var platformPosition = engine.PositionAt(platformRouteId, platformStation.Distance);
+                var tangentX = Math.Cos(platformPosition.Angle) * 13;
+                var tangentY = Math.Sin(platformPosition.Angle) * 13;
+                var indicator = engine.PlatformIndicatorFor(platformRouteId, platformStation);
+                var platformColor = indicator switch
+                {
+                    PlatformIndicator.DoorsOpen => Colors.White,
+                    PlatformIndicator.ReadyToDepart when (int)(engine.GameSeconds * 2) % 2 == 0
+                        => Color.FromRgb(245, 187, 97),
+                    PlatformIndicator.ReadyToDepart => Color.FromRgb(91, 73, 46),
+                    PlatformIndicator.Delayed => Color.FromRgb(242, 107, 114),
+                    _ => Color.FromRgb(115, 224, 176)
+                };
+                drawingContext.DrawLine(CreateFrozenPen(platformColor, 3),
+                    new WpfPoint(platformPosition.X - tangentX, platformPosition.Y - tangentY),
+                    new WpfPoint(platformPosition.X + tangentX, platformPosition.Y + tangentY));
+            }
             var panelHeight = 19 + platforms.Length * 11;
             var panelX = Math.Clamp(position.X + 17, 4, GameEngine.WorldWidth - 139);
             var panelY = Math.Clamp(position.Y - panelHeight - 22, 4, GameEngine.WorldHeight - panelHeight - 4);
@@ -1204,18 +1422,17 @@ public sealed class RailwaySurface : FrameworkElement
                     null,
                     new Rect(panelX + 103, rowY + 1, 21, 5), 2, 2);
             }
-            drawingContext.DrawEllipse(
-                new SolidColorBrush(Color.FromRgb(115, 224, 176)), null, marker, 2.5, 2.5);
         }
     }
 
     private static void DrawNetworkLabels(DrawingContext drawingContext, GameEngine engine)
     {
-        var entry = engine.Routes[0].Points[0];
-        DrawTextCentered(drawingContext, "WEST DEPOT · ENTRY", entry.X + 78, entry.Y + 32, 8,
-            Color.FromRgb(151, 174, 171));
         foreach (var route in engine.Routes)
         {
+            var entry = route.Points[0];
+            DrawTextCentered(drawingContext, $"{route.EntranceName} · ENTRY",
+                entry.X + 54, entry.Y + (entry.Y < 180 ? 31 : entry.Y > 920 ? -31 : 30), 8,
+                Color.FromRgb(151, 174, 171));
             var exit = route.Points[^1];
             DrawTextCentered(drawingContext, route.ExitName, exit.X - 32, exit.Y - 38, 8,
                 Color.FromRgb(245, 187, 97));
@@ -1232,7 +1449,8 @@ public sealed class RailwaySurface : FrameworkElement
     private static void DrawSignal(DrawingContext drawingContext, GameEngine engine, Signal signal)
     {
         var point = engine.SignalPosition(signal);
-        var color = signal.Aspect switch
+        var aspect = engine.DisplayedAspect(signal);
+        var color = aspect switch
         {
             SignalAspect.Green => Color.FromRgb(115, 224, 176),
             SignalAspect.Yellow => Color.FromRgb(245, 187, 97),
@@ -1248,7 +1466,7 @@ public sealed class RailwaySurface : FrameworkElement
         drawingContext.DrawEllipse(glow, null, new WpfPoint(point.X, point.Y - 2), 9, 9);
         drawingContext.DrawEllipse(light, null, new WpfPoint(point.X, point.Y - 2), 4, 4);
         DrawTextCentered(drawingContext, signal.Id, point.X, point.Y - 21, 8, Color.FromRgb(169, 181, 189));
-        DrawTextCentered(drawingContext, signal.Aspect.ToString().ToUpperInvariant(),
+        DrawTextCentered(drawingContext, aspect.ToString().ToUpperInvariant(),
             point.X, point.Y + 32, 7, color);
     }
 

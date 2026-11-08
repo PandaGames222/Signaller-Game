@@ -76,7 +76,7 @@
                         <DropShadowEffect BlurRadius="8" ShadowDepth="0" Opacity="0.8" Color="#73E0B0" />
                     </Ellipse.Effect>
                 </Ellipse>
-                <TextBlock x:Name="VersionText" Text="VERSION 1.6.0" Foreground="#82909D"
+                <TextBlock x:Name="VersionText" Text="VERSION 1.7.0" Foreground="#82909D"
                            FontSize="9" VerticalAlignment="Center" />
                 <Button x:Name="UpdateButton" Content="UPDATE" Margin="10,0,0,0"
                         Padding="9,7" FontSize="9" Click="UpdateButton_Click"
@@ -237,6 +237,9 @@
                                           Grid.Row="1"
                                           ClipToBounds="True"
                                           MouseLeftButtonUp="Railway_MouseLeftButtonUp"
+                                          PreviewMouseDown="Railway_PreviewMouseDown"
+                                          PreviewMouseUp="Railway_PreviewMouseUp"
+                                          PreviewMouseWheel="Railway_PreviewMouseWheel"
                                           MouseMove="Railway_MouseMove"
                                           MouseLeave="Railway_MouseLeave" />
                     <Border x:Name="RegularDeskPanel" Grid.Row="1" Margin="14"
@@ -322,6 +325,9 @@
                                         <local:RailwaySurface x:Name="RegularRailway"
                                                               ClipToBounds="True"
                                                               MouseLeftButtonUp="Railway_MouseLeftButtonUp"
+                                                              PreviewMouseDown="Railway_PreviewMouseDown"
+                                                              PreviewMouseUp="Railway_PreviewMouseUp"
+                                                              PreviewMouseWheel="Railway_PreviewMouseWheel"
                                                               MouseMove="Railway_MouseMove"
                                                               MouseLeave="Railway_MouseLeave" />
                                     </DockPanel>
@@ -518,7 +524,7 @@
             <TextBlock Text="Signaller" Foreground="#71808C" FontSize="9"
                        VerticalAlignment="Center">
                 <Run Text="v" />
-                <Run x:Name="FooterVersion" Text="1.6.0" Foreground="#89959E" />
+                <Run x:Name="FooterVersion" Text="1.7.0" Foreground="#89959E" />
             </TextBlock>
             <TextBlock Text="SAFE WORKING. EVERY JOURNEY." Foreground="#71808C" FontSize="8"
                        HorizontalAlignment="Right" VerticalAlignment="Center" />
